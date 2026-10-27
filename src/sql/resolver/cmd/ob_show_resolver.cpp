@@ -395,7 +395,13 @@ int ObShowResolver::resolve(const ParseNode &parse_tree)
                */
               bool is_full = (1 == ((parse_tree.children_[0]->value_)&1));
               bool is_extended = (1 == (((parse_tree.children_[0]->value_)>>1)&1));
-              if (OB_UNLIKELY(((parse_tree.children_[0]->value_)>>2) != 0)) {
+              if (parse_tree.children_[0]->value_ == 4) {
+                ObSqlString show_sql;
+                ret = show_sql.append_fmt("SELECT column_name AS Field, ai_column_definition AS Definition "
+                    "FROM oceanbase.__all_column WHERE table_id=%lu AND ai_column_definition IS NOT NULL "
+                    "AND LENGTH(ai_column_definition)>0 ORDER BY column_id", show_table_id);
+                OZ(ob_write_string(*allocator_, show_sql.string(), select_sql));
+              } else if (OB_UNLIKELY(((parse_tree.children_[0]->value_)>>2) != 0)) {
                 ret = OB_ERR_UNEXPECTED;
               } else if (is_full) {
                 if (is_extended) {

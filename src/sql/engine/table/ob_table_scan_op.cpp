@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_ENG
+#include "sql/ai/ai_column.h"
 #include "data_plane/transaction/ob_transaction_version.h"
 
 
@@ -107,6 +108,7 @@ OB_DEF_SERIALIZE(ObTableScanCtDef)
   OB_UNIS_ENCODE(snapshot_item_.snapshot_query_expr_);
   OB_UNIS_ENCODE(snapshot_item_.snapshot_query_type_);
   OB_UNIS_ENCODE(bnlj_param_idxs_);
+  OB_UNIS_ENCODE(ai_column_references_);
   OB_UNIS_ENCODE(scan_flags_);
   OB_UNIS_ENCODE(scan_ctdef_);
   OB_UNIS_ENCODE(has_lookup);
@@ -135,6 +137,7 @@ OB_DEF_SERIALIZE_SIZE(ObTableScanCtDef)
   OB_UNIS_ADD_LEN(snapshot_item_.snapshot_query_expr_);
   OB_UNIS_ADD_LEN(snapshot_item_.snapshot_query_type_);
   OB_UNIS_ADD_LEN(bnlj_param_idxs_);
+  OB_UNIS_ADD_LEN(ai_column_references_);
   OB_UNIS_ADD_LEN(scan_flags_);
   OB_UNIS_ADD_LEN(scan_ctdef_);
   OB_UNIS_ADD_LEN(has_lookup);
@@ -163,6 +166,7 @@ OB_DEF_DESERIALIZE(ObTableScanCtDef)
   OB_UNIS_DECODE(snapshot_item_.snapshot_query_expr_);
   OB_UNIS_DECODE(snapshot_item_.snapshot_query_type_);
   OB_UNIS_DECODE(bnlj_param_idxs_);
+  OB_UNIS_DECODE(ai_column_references_);
   OB_UNIS_DECODE(scan_flags_);
   OB_UNIS_DECODE(scan_ctdef_);
   OB_UNIS_DECODE(has_lookup);
@@ -1436,6 +1440,7 @@ int ObTableScanOp::inner_open()
   if (OB_ISNULL(my_session = GET_MY_SESSION(ctx_))) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(ObDASUtils::check_nested_sql_mutating(MY_SPEC.ref_table_id_, ctx_, true))) {
+  } else if (OB_FAIL(AiColumnService::check_strict(ctx_, MY_SPEC.ref_table_id_, MY_CTDEF.ai_column_references_))) {
   } else if (OB_FAIL(init_table_scan_rtdef())) {
   } else if (MY_SPEC.is_fts_ddl_ && OB_FAIL(fts_index_.init(MY_SPEC.is_fts_index_aux_, MY_SPEC.parser_name_,
           MY_SPEC.parser_properties_))) {

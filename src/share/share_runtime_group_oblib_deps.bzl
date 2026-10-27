@@ -230,6 +230,7 @@ _SHARE_RUNTIME_GROUP_OBLIB_DEPS = {
         "//src/oblib:oblib_restore_advanced",
     ],
     "ob_share_common_mixed_1": [
+        "//src/oblib:oblib_mysql_client_services",
         "//src/oblib:oblib_collections_advanced",
         "//src/oblib:oblib_collections_runtime",
         "//src/oblib:oblib_common",

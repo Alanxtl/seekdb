@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/ai/ai_column.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
@@ -1833,6 +1834,7 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
                                              ObDMLStmt *stmt /* = NULL */)
 {
   int ret = OB_SUCCESS;
+  include_hidden = include_hidden || (AiColumnService::allows_hidden_columns() && column_name.prefix_match("__ai_"));
   ObColumnRefRawExpr *col_expr = NULL;
   ObSchemaGetterGuard *schema_guard = NULL;
   ColumnItem column_item;

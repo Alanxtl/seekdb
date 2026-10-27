@@ -259,7 +259,7 @@ END_P SET_VAR DELIMITER
 //-----------------------------reserved keyword end-------------------------------------------------
 %token <non_reserved_keyword>
 //-----------------------------non_reserved keyword begin-------------------------------------------
-        ACCESS ACCOUNT ACTION ACTIVE ADDDATE AFTER AGAINST AGGREGATE AI ALGORITHM ALWAYS ALLOW ANALYSE ANY
+        ACCESS ACCOUNT ACTION ACTIVE ADDDATE AFTER AGAINST AGGREGATE AI RETRY ALGORITHM ALWAYS ALLOW ANALYSE ANY
         APPROX_COUNT_DISTINCT APPROX_COUNT_DISTINCT_SYNOPSIS APPROX_COUNT_DISTINCT_SYNOPSIS_MERGE
         ARRAY ASCII ASIS AT ATTRIBUTE AUTHORS AUTO AUTOEXTEND_SIZE AUTO_INCREMENT AUTO_INCREMENT_CACHE_SIZE
         AVG AVG_ROW_LENGTH ACTIVATE AVAILABILITY ASYNCHRONOUS AUDIT ADMIN AUTO_REFRESH API_MODE APPROX APPROXIMATE ARRAY_AGG ARRAY_FILTER ARRAY_FIRST ARRAY_MAP ARRAY_SORTBY
@@ -6146,6 +6146,17 @@ not NULLX
   malloc_terminal_node($$, result->malloc_pool_, T_CONSTR_NOT_NULL);
   $$->sql_str_off_ = $2->sql_str_off_;
 }
+| AI COLUMN '(' expr ')' WITH '(' expr_list ')'
+{
+  dup_expr_string($4, result, @4.first_column, @4.last_column);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN, 2, $4, $8);
+}
+| AI COLUMN '(' expr ')'
+{
+  dup_expr_string($4, result, @4.first_column, @4.last_column);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN, 2, $4, NULL);
+}
+
 | NULLX
 {
   (void)($1) ; /* make bison mute */
@@ -12632,6 +12643,15 @@ SHOW opt_extended_or_full TABLES opt_from_or_in_database_clause opt_show_conditi
   value->value_ = $2[0];
   malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_TABLES, 3, $4, $5, value);
 }
+| SHOW AI COLUMNS from_or_in relation_factor
+{
+  (void)$4;
+  ParseNode *mode = NULL;
+  malloc_terminal_node(mode, result->malloc_pool_, T_INT);
+  mode->value_ = 4;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, mode, $5, NULL, NULL);
+}
+
 | SHOW databases_or_schemas opt_status opt_show_condition
 {
   (void)$2;
@@ -14660,6 +14680,7 @@ alter_with_opt_hint TABLE relation_factor alter_table_actions
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALTER_TABLE, 4, $3, table_actions, NULL, $1);
   $$->value_ = 0;
 }
+
 ;
 
 
@@ -14697,6 +14718,12 @@ opt_set table_option_list_space_seperated
   (void)$1;
   merge_nodes($$, result, T_TABLE_OPTION_LIST, $2);
 }
+| RETRY AI COLUMN column_name opt_where
+{
+  if ($5 != NULL) { dup_expr_string($5, result, @5.first_column, @5.last_column); }
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_RETRY, 2, $4, $5);
+}
+
 | CONVERT TO CHARACTER SET charset_name opt_collation
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_CONVERT_TO_CHARACTER, 2, $5, $6);
@@ -17964,6 +17991,7 @@ ACCOUNT
 |       RETURNS
 |       REVERSE
 |       REWRITE
+|       RETRY
 |       ROLE
 |       ROLLBACK
 |       ROLLUP

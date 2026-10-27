@@ -46,6 +46,7 @@ public:
   inline ObUpdateStmt *get_update_stmt() { return static_cast<ObUpdateStmt*>(stmt_); }
 private:
   int resolve_table_list(const ParseNode &parse_tree);
+  int add_ai_column_assignments(common::ObIArray<ObTableAssignment> &assignments);
   int generate_update_table_info(ObTableAssignment &table_assign);
   int check_multi_update_table_conflict();
   int check_join_update_conflict();

@@ -530,6 +530,7 @@ seekdb_semantic_unity_cc_library(
         "//rust:config_headers",
     ],
     implementation_deps = [
+        ":local_storage_interface",
         "//rust:local",
         ":cluster_version_interface",
         ":error_codes",
@@ -1765,6 +1766,8 @@ seekdb_semantic_unity_cc_library(
         },
     ),
     implementation_deps = [
+        ":local_table_schema",
+        ":local_storage_interface",
         ":_share_implementation_headers",
         "//rust:config_headers",
     ] + _SHARE_RUNTIME_COMPILE_DEPS,

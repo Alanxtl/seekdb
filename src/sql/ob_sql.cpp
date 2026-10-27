@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL
+#include "sql/ai/ai_column.h"
 #include "config_bridge.h"
 #include "sql/ob_sql.h"
 #include "lib/json/ob_json_print_utils.h"
@@ -95,12 +96,16 @@ int ObSql::init(common::ObOptStatManager *opt_stat_mgr,
       self_addr_ = addr;
       inited_ = true;
       queue_.start();
+      ret = AiColumnService::instance().start_service();
     }
   }
   return ret;
 }
 
+void ObSql::stop_ai_columns() { AiColumnService::instance().stop_service(); }
+
 void ObSql::destroy() {
+  stop_ai_columns();
   if (inited_) {
     queue_.destroy();
     plan_cache_ = NULL;

@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/ai/ai_column.h"
 #include "config_bridge.h"
 #include "sql/resolver/ddl/ob_alter_table_resolver.h"
 #include "sql/resolver/expr/ob_raw_expr_part_expr_checker.h"
@@ -151,6 +152,7 @@ int ObAlterTableResolver::resolve(const ParseNode &parse_tree)
     //resolve action list
     if (OB_SUCCESS == ret && NULL != parse_tree.children_[ACTION_LIST]){
       if (OB_FAIL(resolve_action_list(*(parse_tree.children_[ACTION_LIST])))) {
+      } else if (OB_FAIL(AiColumnDefinition::add_hidden_columns(alter_table_stmt->get_alter_table_schema(), true, table_schema_))) {
       } else if (OB_FAIL(set_table_options())) {
       } else if (OB_FAIL(check_semistruct_encoding_type(*table_schema_, alter_table_stmt->get_alter_table_schema()))) {
       } else {
@@ -401,6 +403,32 @@ int ObAlterTableResolver::resolve_action_list(const ParseNode &node)
       } else if (FALSE_IT(alter_table_stmt->inc_alter_table_action_count())) {
       } else {
         switch (action_node->type_) {
+        case T_AI_COLUMN_RETRY: {
+          if (node.num_child_ != 1) {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "combining AI COLUMN RETRY with another ALTER action");
+          } else if (action_node->num_child_ != 2 || OB_ISNULL(action_node->children_[0])) {
+            ret = OB_INVALID_ARGUMENT;
+          } else {
+            ParseNode *name = action_node->children_[0];
+            ObString column_name(name->str_len_, name->str_value_);
+            const ObColumnSchemaV2 *column = table_schema_->get_column_schema(column_name);
+            if (OB_ISNULL(column) || !column->is_ai_column()) {
+              ret = OB_NOT_SUPPORTED;
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "retrying a column that is not an AI column");
+            }
+            else {
+              ObString condition;
+              if (OB_NOT_NULL(action_node->children_[1])) {
+                ParseNode *where = action_node->children_[1];
+                condition.assign_ptr(where->str_value_, where->str_len_);
+              }
+              alter_table_stmt->set_ai_column_retry(column_name, condition);
+            }
+          }
+          break;
+        }
+
         //deal with alter table option
         case T_ALTER_TABLE_OPTION: {
             alter_table_stmt->set_alter_table_option();

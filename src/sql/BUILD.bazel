@@ -250,7 +250,7 @@ cc_library(
     ],
     implementation_deps = _SQL_PRIVATE_HEADER_SHARE_DEPS,
     tags = ["manual"],
-    visibility = ["//src/sql:__subpackages__"],
+    visibility = ["//src/sql:__subpackages__", "//unittest/sql:__subpackages__"],
 )
 
 # Unit tests exercise the same external SQL seam as production callers while
@@ -278,7 +278,7 @@ seekdb_test_interface(
             sql_runtime_without_pass_test_oblib_deps()
         )
     }.keys()),
-    visibility = ["//unittest/sql:__pkg__"],
+    visibility = ["//unittest/sql:__subpackages__"],
 )
 
 _SQL_STANDALONE_SANITY_PARTITION = sql_partition_sources(

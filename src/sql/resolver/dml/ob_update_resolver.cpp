@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/ai/ai_column.h"
 #include "sql/resolver/dml/ob_update_resolver.h"
 
 namespace oceanbase
@@ -105,6 +106,8 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     }
   }
 
+  if (OB_SUCC(ret)) { ret = add_ai_column_assignments(tables_assign); }
+
   if (OB_SUCC(ret)) {
     // Parse cascading update columns
     if (OB_FAIL(resolve_additional_assignments(tables_assign,
@@ -149,6 +152,43 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     } else if (OB_FAIL(update_stmt->check_dml_source_from_join())) {
     } else if (OB_FAIL(check_safe_update_mode(update_stmt))) {
     } else { /*do nothing*/ }
+  }
+  return ret;
+}
+
+int ObUpdateResolver::add_ai_column_assignments(ObIArray<ObTableAssignment> &assignments)
+{
+  int ret = OB_SUCCESS;
+  if (AiColumnService::is_internal()) { return ret; }
+  for (int64_t i = 0; OB_SUCC(ret) && i < assignments.count(); ++i) {
+    ObTableAssignment &assignment = assignments.at(i);
+    const TableItem *item = get_update_stmt()->get_table_item_by_id(assignment.table_id_);
+    const ObTableSchema *table = nullptr;
+    if (OB_ISNULL(item)) { ret = OB_ERR_UNEXPECTED; }
+    else { OZ(schema_checker_->get_table_schema(item->get_base_table_item().ref_id_, table)); }
+    if (OB_SUCC(ret) && OB_NOT_NULL(table) && AiColumnService::has_columns(*table)) {
+      for (int64_t j = 0; OB_SUCC(ret) && j < assignment.assignments_.count(); ++j) {
+        const ObColumnSchemaV2 *column = table->get_column_schema(assignment.assignments_.at(j).column_expr_->get_column_id());
+        if (OB_NOT_NULL(column) && column->is_ai_column()) {
+          ret = OB_INVALID_ARGUMENT;
+          LOG_USER_ERROR(OB_INVALID_ARGUMENT, "AI COLUMN results cannot be assigned by business SQL");
+        }
+      }
+      for (auto it = table->column_begin(); OB_SUCC(ret) && it != table->column_end(); ++it) {
+        if (!(*it)->is_ai_column() && !((*it)->is_hidden()
+            && (*it)->get_column_name_str().prefix_match("__ai_"))) { continue; }
+        ObArray<ObColumnRefRawExpr *> columns;
+        OZ(add_column_to_stmt(*item, **it, columns));
+        if (OB_SUCC(ret) && columns.count() == 1) {
+          ObAssignment implicit;
+          implicit.column_expr_ = columns.at(0);
+          OZ(ObRawExprUtils::build_remove_const_expr(*params_.expr_factory_,
+              *session_info_, columns.at(0), implicit.expr_));
+          implicit.is_implicit_ = true;
+          OZ(assignment.assignments_.push_back(implicit));
+        }
+      }
+    }
   }
   return ret;
 }

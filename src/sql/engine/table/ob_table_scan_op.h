@@ -130,6 +130,7 @@ public:
   ObTableScanCtDef(common::ObIAllocator &allocator)
     : snapshot_item_(),
       bnlj_param_idxs_(allocator),
+      ai_column_references_(allocator),
       scan_flags_(),
       scan_ctdef_(allocator),
       lookup_ctdef_(nullptr),
@@ -183,6 +184,7 @@ public:
   //scan_ctdef means the parameter required by the scan main table
   //When the query needs to access the index,
   //scan_ctdef means the parameter required by the scan index table
+  UIntFixedArray ai_column_references_;
   ObDASScanCtDef scan_ctdef_;
   //lookup_ctdef is a pointer,
   //which is used only when accessing index table and lookup the main table,

@@ -220,6 +220,9 @@ struct ObTempExprBackupCtx;
 class ObExecContext
 {
 public:
+  bool is_ai_column_sql() const { return ai_column_sql_; }
+  void set_ai_column_sql(bool value) { ai_column_sql_ = value; }
+
   // Process-local collaborators are intentionally excluded from execution
   // context serialization.  Async/PX clone boundaries must carry this small
   // value object explicitly and install it on the deserialized context.
@@ -919,6 +922,7 @@ protected:
   //to link the parent exec ctx in the nested sql
   //in order to access the parent sql attributes,
   //such as the mutating option checking or nested sql constraining checking
+  bool ai_column_sql_ = false;
   ObExecContext *parent_ctx_;
   int64_t nested_level_; //the number of recursive SQL levels
   bool is_ps_prepare_stage_;

@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/ai/ai_column.h"
 #include "config_bridge.h"
 #include "ob_ddl_resolver.h"
 #include "data_plane/blocksstable/ob_index_block_util.h"
@@ -2084,6 +2085,11 @@ int ObDDLResolver::resolve_normal_column_attribute(ObColumnSchemaV2 &column,
     for (int64_t i = 0; OB_SUCC(ret) && i < attrs_node->num_child_; ++i) {
       ParseNode *attr_node = attrs_node->children_[i];
       switch (attr_node->type_) {
+      case T_AI_COLUMN: {
+        if (column.is_ai_column()) { ret = OB_INVALID_ARGUMENT; }
+        else { ret = AiColumnDefinition::resolve(*attr_node, column, *allocator_); }
+        break;
+      }
       case T_CONSTR_NOT_NULL: {
         if (OB_FAIL(resolve_normal_column_attribute_constr_not_null(column, attr_node, resolve_stat))) {
         }
@@ -3716,6 +3722,16 @@ int ObDDLResolver::check_default_value(ObObj &default_value,
   const ObObj input_default_value = default_value;
   if (OB_ISNULL(session_info)) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (column.is_ai_column()) {
+    ObRawExprFactory factory(allocator);
+    ObResolverParams params;
+    params.allocator_ = &allocator;
+    params.expr_factory_ = &factory;
+    params.session_info_ = session_info;
+    params.schema_checker_ = schema_checker;
+    params.srs_provider_ = srs_provider;
+    params.lob_read_service_ = lob_read_service;
+    ret = AiColumnDefinition::validate(column, table_schema, resolved_cols, params);
   } else if (column.is_generated_column()) {
     ObString expr_str;
     ObRawExpr *expr = NULL;

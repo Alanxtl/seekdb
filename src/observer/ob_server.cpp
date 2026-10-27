@@ -1551,6 +1551,7 @@ int ObServer::stop()
 {
   int ret = OB_SUCCESS;
   int fail_ret = OB_SUCCESS;
+  sql_engine_.stop_ai_columns();
   FLOG_INFO("[OBSERVER_NOTICE] stop observer begin");
   LOG_DBA_INFO_V2(OB_SERVER_STOP_BEGIN, "observer stop begin.");
 

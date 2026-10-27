@@ -18,6 +18,7 @@
 #define OB_AI_FUNC_UTILS_H_
 
 #include "ob_ai_func.h"
+#include <atomic>
 #include "share/json/ob_json_helper.h"
 #include "lib/encode/ob_base64_encode.h"
 
@@ -236,6 +237,7 @@ public:
   ObAIFuncJsonUtils() {}
   virtual ~ObAIFuncJsonUtils() {}
   static bool ob_is_json_array_all_str(ObJsonArray* json_array);
+  static int validate_embeddings(ObIJsonBase *result, int64_t count, int64_t dimension);
   static int transform_array_to_json_array(ObIAllocator &allocator, ObArray<ObString> &contents, ObJsonArray *&array);
   static int get_json_object(ObIAllocator &allocator, ObJsonObject *&obj_node);
   static int get_json_array(ObIAllocator &allocator, ObJsonArray *&array_node);
@@ -352,12 +354,13 @@ public:
   {}
    virtual ~ObAIFuncModel() {}
    // completion
-   int call_completion(ObString &prompt, ObJsonObject *config, ObString &result);
+   int call_completion(ObString &prompt, ObJsonObject *config, ObString &result,
+       const ObString &system_prompt = ObString(), int64_t max_retries = 3, const std::atomic<bool> *cancel = nullptr);
    int call_completion_vector(ObArray<ObString> &prompts, ObJsonObject *config, ObArray<ObString> &results);
    // dense_embedding
    int call_dense_embedding(ObString &content, ObJsonObject *config, ObString &result);
    int call_dense_embedding_vector(ObArray<ObString> &contents, ObJsonObject *config, ObArray<ObString> &results);
-   int call_dense_embedding_vector_v2(ObArray<ObString> &contents, ObJsonObject *config, ObArray<ObString> &results);
+   int call_dense_embedding_vector_v2(ObArray<ObString> &contents, ObJsonObject *config, ObArray<ObString> &results, int64_t max_retries = 3, const std::atomic<bool> *cancel = nullptr);
    // rerank
    int call_rerank(ObString &query, ObJsonArray *contents, ObJsonArray *&results);
  private:

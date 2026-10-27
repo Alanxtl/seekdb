@@ -33,6 +33,8 @@ public:
   int init(common::ObIAllocator &allocator, const ObString &url, ObArray<ObString> &headers);
   void clean_up();
   void reset();
+  void set_cancel_flag(const std::atomic<bool> *flag) { cancel_flag_ = flag; }
+  void set_max_retries(int64_t retries) { max_retry_times_ = retries; }
   void set_timeout_sec(int64_t timeout_sec) { timeout_sec_ = timeout_sec; }
   // ai function interface
   virtual int send_post(common::ObIAllocator &allocator, 
@@ -54,6 +56,7 @@ private:
   int send_post(ObJsonObject *data, ObJsonObject *&response);
   int send_post_batch(ObArray<ObJsonObject *> &data_array, ObArray<ObJsonObject *> &responses);
   int init_easy_handle(CURL *curl, ObJsonObject *data, ObStringBuffer &response_buf);
+  static int progress_callback(void *self, curl_off_t, curl_off_t, curl_off_t, curl_off_t);
   static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
   bool is_retryable_status_code(int64_t http_code);
   bool is_timeout();
@@ -68,6 +71,7 @@ private:
   ObArray<ObStringBuffer *> response_buffers_;
   // atomic boolean value, used to check if the batch task is finished
   std::atomic<bool> is_finished_;
+  const std::atomic<bool> *cancel_flag_ = nullptr;
   int64_t max_retry_times_;
   int64_t abs_timeout_ts_;
   int64_t timeout_sec_;

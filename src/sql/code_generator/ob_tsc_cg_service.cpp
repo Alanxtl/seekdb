@@ -34,6 +34,20 @@ int ObTscCgService::generate_tsc_ctdef(ObLogTableScan &op, ObTableScanCtDef &tsc
   int ret = OB_SUCCESS;
   ObDASScanCtDef &scan_ctdef = tsc_ctdef.scan_ctdef_;
   ObDASBaseCtDef *root_ctdef = nullptr;
+  // Preserve semantic references before native DML adds old values and index
+  // maintenance columns to the physical scan's access list.
+  ObSEArray<uint64_t, 8> references;
+  if (op.get_stmt() != nullptr) {
+    const auto &columns = op.get_stmt()->get_column_items();
+    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+      const ColumnItem &column = columns.at(i);
+      if (column.table_id_ == op.get_table_id() && column.expr_ != nullptr
+          && column.expr_->is_explicited_reference()) {
+        OZ(references.push_back(column.column_id_));
+      }
+    }
+    OZ(tsc_ctdef.ai_column_references_.assign(references));
+  }
   ObQueryFlag query_flag;
   if (op.is_need_feedback() &&
       op.get_plan()->get_optimizer_context().get_phy_plan_type() == OB_PHY_PLAN_LOCAL) {

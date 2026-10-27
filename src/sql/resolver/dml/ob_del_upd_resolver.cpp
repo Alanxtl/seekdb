@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/ai/ai_column.h"
 #include "ob_del_upd_resolver.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
 #include "sql/resolver/dml/ob_update_stmt.h"
@@ -2170,6 +2171,15 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
       } else if (!session_info_->get_ddl_info().is_ddl() && OB_HIDDEN_SESS_CREATE_TIME_COLUMN_ID == column_expr->get_column_id()) {
         ret = OB_NOT_SUPPORTED;
         LOG_USER_ERROR(OB_NOT_SUPPORTED, "specify __sess_create_time value");
+      } else if (!AiColumnService::is_internal() && table_item->is_basic_table()) {
+        const ObTableSchema *table = nullptr;
+        OZ(schema_checker_->get_table_schema(table_item->ref_id_, table));
+        const ObColumnSchemaV2 *column = OB_ISNULL(table) ? nullptr : table->get_column_schema(column_expr->get_column_id());
+        if (OB_SUCC(ret) && OB_NOT_NULL(column) && column->is_ai_column()) {
+          ret = OB_INVALID_ARGUMENT;
+          LOG_USER_ERROR(OB_INVALID_ARGUMENT, "AI COLUMN results cannot be assigned by business SQL");
+        }
+        OZ(mock_values_column_ref(column_expr));
       } else if (OB_FAIL(mock_values_column_ref(column_expr))) {
       }
     }//end for
@@ -2193,6 +2203,12 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
       int64_t N = column_items.count();
       for (int64_t i = 0; OB_SUCC(ret) && i < N; i++) {
         uint64_t column_id = column_items.at(i).column_id_;
+        if (!AiColumnService::is_internal() && table_item->is_basic_table()) {
+          const ObTableSchema *table = nullptr;
+          OZ(schema_checker_->get_table_schema(table_item->ref_id_, table));
+          const ObColumnSchemaV2 *column = OB_ISNULL(table) ? nullptr : table->get_column_schema(column_id);
+          if (OB_NOT_NULL(column) && column->is_ai_column()) { continue; }
+        }
         bool is_duplicate = false;
         if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
         } else if (is_duplicate) {

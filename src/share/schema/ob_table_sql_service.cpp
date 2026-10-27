@@ -30,6 +30,26 @@ namespace share
 namespace schema
 {
 
+namespace {
+int cancel_ai_column_tasks(ObISQLClient &client, const ObTableSchema &table,
+                           uint64_t column_id = OB_INVALID_ID)
+{
+  int ret = OB_SUCCESS;
+  bool has_ai = false;
+  for (auto it = table.column_begin(); !has_ai && it != table.column_end(); ++it) {
+    has_ai = (*it)->is_ai_column();
+  }
+  if (has_ai) {
+    ObSqlString sql;
+    int64_t affected = 0;
+    OZ(sql.append_fmt("DELETE FROM oceanbase.__all_ai_column_task WHERE table_id=%lu", table.get_table_id()));
+    if (column_id != OB_INVALID_ID) { OZ(sql.append_fmt(" AND column_id=%lu", column_id)); }
+    OZ(client.write(sql.ptr(), affected));
+  }
+  return ret;
+}
+} // namespace
+
 int ObTableSqlService::exec_update(
     ObISQLClient &sql_client,
     const uint64_t table_id,
@@ -697,6 +717,8 @@ int ObTableSqlService::drop_table(const ObTableSchema &table_schema,
     }
   }
 
+  if (OB_SUCC(ret)) { ret = cancel_ai_column_tasks(sql_client, table_schema); }
+
   // delete from __all_table_stat, __all_monitor_modified, __all_column_usage, __all_optstat_user_prefs
   if (OB_SUCC(ret)) {
     if (OB_FAIL(delete_from_all_table_stat(sql_client, table_id))) {
@@ -935,6 +957,12 @@ int ObTableSqlService::update_single_column(
     } else if (affected_rows > 1) {
       ret = OB_ERR_UNEXPECTED;
     }
+  }
+
+  const ObColumnSchemaV2 *old_ai = origin_table_schema.get_column_schema(new_column_schema.get_column_id());
+  if (OB_SUCC(ret) && old_ai != nullptr && old_ai->is_ai_column()
+      && old_ai->get_ai_column_definition() != new_column_schema.get_ai_column_definition()) {
+    ret = cancel_ai_column_tasks(sql_client, origin_table_schema, new_column_schema.get_column_id());
   }
 
   // change from non-auto-increment to auto-increment, add sequence record
@@ -1820,6 +1848,11 @@ int ObTableSqlService::update_table_options(ObISQLClient &sql_client,
     }
   }
 
+  if (OB_SUCC(ret) && (operation_type == OB_DDL_DROP_TABLE_TO_RECYCLEBIN
+      || operation_type == OB_DDL_TRUNCATE_DROP_TABLE_TO_RECYCLEBIN)) {
+    ret = cancel_ai_column_tasks(sql_client, table_schema);
+  }
+
   // rename constraint name while drop/truncate table and recyclebin is on.
   if (OB_SUCC(ret)) {
     if (OB_DDL_DROP_TABLE_TO_RECYCLEBIN == operation_type){
@@ -2003,6 +2036,13 @@ int ObTableSqlService::delete_single_column(
     } else if (affected_rows > 1) {
       ret = OB_ERR_UNEXPECTED;
     }
+  }
+
+  if (OB_SUCC(ret) && orig_column_schema.is_ai_column()) {
+    ObSqlString cancel;
+    int64_t affected = 0;
+    OZ(cancel.append_fmt("DELETE FROM oceanbase.__all_ai_column_task WHERE table_id=%lu AND column_id=%lu", table_id, column_id));
+    OZ(sql_client.write(cancel.ptr(), affected));
   }
 
   if (OB_SUCC(ret)) {
@@ -3210,6 +3250,7 @@ int ObTableSqlService::gen_column_dml_without_check(
                                         ? dml.add_pk_column("schema_version", column.get_schema_version())
                                         : dml.add_column("schema_version", column.get_schema_version()))
                          || OB_FAIL(dml.add_column("column_flags", column.get_stored_column_flags()))
+                         || OB_FAIL(dml.add_column("ai_column_definition", ObHexEscapeSqlStr(column.get_ai_column_definition())))
                          || OB_FAIL(dml.add_column("extended_type_info", ObHexEscapeSqlStr(bin_extended_type_info)))
                          || OB_FAIL(dml.add_column("prev_column_id", column.get_prev_column_id()))
                          || (OB_FAIL(dml.add_column("srs_id", column.get_srs_id())))

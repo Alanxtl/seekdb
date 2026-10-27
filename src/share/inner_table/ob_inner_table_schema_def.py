@@ -342,7 +342,8 @@ all_column_def = dict(
       ('sub_data_type', 'int', 'false', '0'),
       ('skip_index_attr', 'int', 'false', '0'),
       ('lob_chunk_size', 'int', 'false', 'OB_DEFAULT_LOB_CHUNK_SIZE'),
-      ('local_session_vars', 'longtext', 'true')
+      ('local_session_vars', 'longtext', 'true'),
+      ('ai_column_definition', 'longtext', 'true')
   ]
   )
 
@@ -2433,6 +2434,7 @@ all_ai_model_endpoint_def = dict(
     meta_record_in_sys = False,
     normal_columns = [
         ('version', 'int', 'false'),
+        ('max_concurrency', 'int', 'false', 32),
         ('endpoint_name', 'varchar:128'),
         ('ai_model_name', 'varchar:128', 'false'),
         ('url', 'varchar:2048', 'true'),
@@ -2445,6 +2447,37 @@ all_ai_model_endpoint_def = dict(
     ]
 )
 def_table_schema(**all_ai_model_endpoint_def)
+
+
+
+all_ai_column_task_def = dict(
+    owner = 'seekdb',
+    table_name = '__all_ai_column_task',
+    table_id = '1131',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    rowkey_columns = [('table_id', 'int'), ('row_key', 'varbinary:4096'), ('column_id', 'int')],
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    normal_columns = [
+        ('request_id', 'varchar:64', 'false'),
+        ('group_id', 'varchar:64', 'false'),
+        ('definition', 'longtext', 'false'),
+        ('state', 'int', 'false', '0'),
+        ('retry_count', 'int', 'false', '0'),
+        ('eligible_ts', 'timestamp:6', 'false', 'CURRENT_TIMESTAMP'),
+        ('rowkey_predicate', 'longtext', 'false'),
+        ('attempt', 'int', 'false', '0'),
+        ('max_retries', 'int', 'false', '2'),
+        ('claim_id', 'varchar:64', 'true'),
+        ('lease_until', 'int', 'false', '0'),
+        ('input_sql', 'longtext', 'false'),
+        ('row_filter', 'longtext', 'false'),
+        ('result_sql', 'longtext', 'true'),
+        ('error_code', 'int', 'false', '0')
+    ]
+)
+def_table_schema(**all_ai_column_task_def)
 
 
 all_objauth_mysql_def = dict(
@@ -7352,6 +7385,27 @@ def_table_schema(
            CAST(000000000000000000000 as UNSIGNED) AS POSITION
     FROM DUAL limit 0;
   """.replace("\n", " ")
+)
+
+def_table_schema(
+    owner = 'seekdb',
+    database_id = 'OB_SYS_DATABASE_ID',
+    table_name = '__all_ai_column',
+    table_id = '20024',
+    table_type = 'SYSTEM_VIEW',
+    gm_columns = [], rowkey_columns = [], normal_columns = [],
+    view_definition = """
+      SELECT c.table_id, c.column_id, c.column_name,
+        CAST(JSON_UNQUOTE(JSON_EXTRACT(c.ai_column_definition, '$.max_retries')) AS SIGNED) AS max_retries,
+        s.column_id AS state_column_id, r.column_id AS request_column_id,
+        p.column_id AS result_spec_column_id,
+        c.ai_column_definition AS normalized_expr
+      FROM oceanbase.__all_column c
+      LEFT JOIN oceanbase.__all_column s ON s.table_id=c.table_id AND s.column_name=CONCAT('__ai_state_',c.column_name)
+      LEFT JOIN oceanbase.__all_column r ON r.table_id=c.table_id AND r.column_name=CONCAT('__ai_request_',c.column_name)
+      LEFT JOIN oceanbase.__all_column p ON p.table_id=c.table_id AND p.column_name=CONCAT('__ai_spec_',c.column_name)
+      WHERE (c.column_flags & 2097152)=0 AND c.ai_column_definition IS NOT NULL AND c.ai_column_definition<>''
+    """.replace("\n", " ")
 )
 
 # 21000: GV$SESSION_EVENT # removed
@@ -13819,7 +13873,8 @@ def_table_schema(
       REQUEST_MODEL_NAME,
       PARAMETERS,
       REQUEST_TRANSFORM_FN,
-      RESPONSE_TRANSFORM_FN
+      RESPONSE_TRANSFORM_FN,
+      MAX_CONCURRENCY
     FROM oceanbase.__all_ai_model_endpoint WHERE ENDPOINT_ID != -1;
   """.replace("\n", " ")
 )

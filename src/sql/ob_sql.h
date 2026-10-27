@@ -119,6 +119,7 @@ public:
            common::ObISrsProvider &srs_provider,
            common::ObILobReadService &lob_read_service);
   void destroy();
+  void stop_ai_columns();
 public:
   /// print statatistics of SQL module
 

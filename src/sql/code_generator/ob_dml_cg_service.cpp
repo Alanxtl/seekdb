@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_CG
+#include "sql/ai/ai_column.h"
 #include "ob_dml_cg_service.h"
 #include "sql/code_generator/ob_static_engine_cg.h"
 #include "sql/engine/ob_physical_plan.h"
@@ -2093,6 +2094,14 @@ int ObDmlCgService::generate_dml_base_ctdef(ObLogicalOperator &op,
                                             ObIArray<ObRawExpr*> &new_row)
 {
   int ret = OB_SUCCESS;
+  if (index_dml_info.is_primary_index_) {
+    const ObTableSchema *table = nullptr;
+    OZ(cg_.opt_ctx_->get_schema_guard()->get_table_schema(index_dml_info.ref_table_id_, table));
+    if (OB_SUCC(ret) && table != nullptr && AiColumnService::has_columns(*table)) {
+      cg_.phy_plan_->set_has_nested_sql(true);
+      cg_.phy_plan_->set_need_serial_exec(true);
+    }
+  }
   dml_base_ctdef.is_primary_index_ = index_dml_info.is_primary_index_;
   dml_base_ctdef.is_vec_hnsw_index_vid_opt_ = index_dml_info.is_vec_hnsw_index_vid_opt_;
   dml_base_ctdef.column_ids_.set_capacity(index_dml_info.column_exprs_.count());

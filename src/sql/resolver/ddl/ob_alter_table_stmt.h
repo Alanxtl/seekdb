@@ -35,6 +35,11 @@ public:
   explicit ObAlterTableStmt(common::ObIAllocator *name_pool);
   ObAlterTableStmt();
   virtual ~ObAlterTableStmt();
+  bool is_ai_column_retry() const { return !ai_retry_column_.empty(); }
+  void set_ai_column_retry(const common::ObString &column, const common::ObString &condition)
+  { ai_retry_column_ = column; ai_retry_condition_ = condition; }
+  const common::ObString &get_ai_retry_column() const { return ai_retry_column_; }
+  const common::ObString &get_ai_retry_condition() const { return ai_retry_condition_; }
   int add_column(const share::schema::AlterColumnSchema &column_schema);
   int add_index_arg(obcall::ObIndexArg *index_arg);
   int check_drop_fk_arg_exist(obcall::ObDropForeignKeyArg *drop_fk_arg, bool &has_same_fk_arg);
@@ -56,6 +61,7 @@ public:
 
   int set_origin_database_name(const common::ObString &origin_db_name);
   int set_origin_table_name(const common::ObString &origin_table_name);
+  uint64_t get_table_id() const { return alter_table_arg_.alter_table_schema_.get_table_id(); }
   void set_table_id(const uint64_t table_id);
   inline void set_alter_table_option(){alter_table_arg_.is_alter_options_ = true;}
   inline void set_convert_to_character(){alter_table_arg_.is_convert_to_character_ = true;}
@@ -105,6 +111,8 @@ public:
   }
   void set_lock_priority();
 private:
+  common::ObString ai_retry_column_;
+  common::ObString ai_retry_condition_;
   obcall::ObAlterTableArg alter_table_arg_;
   bool is_comment_table_;
   bool is_alter_system_;

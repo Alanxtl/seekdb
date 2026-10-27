@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_ENG
+#include "sql/ai/ai_column.h"
 #include "config_bridge.h"
 #include "common/ob_timeout_ctx.h"
 #include "lib/stat/ob_diagnostic_info_guard.h"
@@ -753,6 +754,10 @@ int ObAlterTableExecutor::alter_table_exchange_partition_rpc(obcall::ObExchangeP
 
 int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
 {
+  if (stmt.is_ai_column_retry()) {
+    return AiColumnService::retry(ctx, stmt.get_table_id(),
+        stmt.get_ai_retry_column(), stmt.get_ai_retry_condition());
+  }
   int ret = OB_SUCCESS;
   ObSqlExecutorCtx *task_exec_ctx = NULL;
   obcall::ObAlterTableArg &alter_table_arg = stmt.get_alter_table_arg();
@@ -879,6 +884,14 @@ int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
       "schema_version", res.schema_version_);
     SQL_ENG_LOG(INFO, "finish alter table execute.", K(ret), "ddl_event_info", ObDDLEventInfo(GCTX.self_addr()), K(first_stmt));
   }
+  bool changed_ai_definition = false;
+  for (auto it = alter_table_arg.alter_table_schema_.column_begin();
+       it != alter_table_arg.alter_table_schema_.column_end(); ++it) {
+    const auto *column = static_cast<const AlterColumnSchema *>(*it);
+    changed_ai_definition |= column->is_ai_column() && column->alter_type_ != OB_DDL_DROP_COLUMN;
+  }
+  if (OB_SUCC(ret) && changed_ai_definition) { ret = AiColumnService::backfill(stmt.get_table_id()); }
+
   return ret;
 }
 

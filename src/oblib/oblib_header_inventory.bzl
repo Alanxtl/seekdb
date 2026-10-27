@@ -1832,6 +1832,9 @@ OBLIB_PRIVATE_HEADERS = [
     "lib/charset/ob_byteorder.h",
     "lib/charset/ob_ctype_bin_tab.h",
     "lib/charset/ob_ctype_utf8_tab.h",
+    "lib/charset/str_uca_type.h",
+
+    "lib/charset/ob_ctype_uca_tab.h",
     "lib/charset/ob_uctype.h",
     "lib/checksum/ob_crc16.h",
     "lib/codec/ob_bp_helpers.h",

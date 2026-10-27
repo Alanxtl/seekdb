@@ -1215,6 +1215,7 @@ _SQL_RUNTIME_GROUP_OBLIB_DEPS = {
         "//src/oblib:oblib_rpc_transport_services",
     ],
     "ob_sql_engine_expr_15": [
+        "//src/oblib:oblib_rpc_transport_services",
         "//src/oblib:common_sql_mode",
         "//src/oblib:oblib_collections_advanced",
         "//src/oblib:oblib_collections_base",
