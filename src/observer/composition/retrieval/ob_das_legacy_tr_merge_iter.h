@@ -19,6 +19,9 @@
 
 #include "sql/das/iter/ob_das_iter.h"
 #include "sql/das/ob_das_ir_define.h"
+
+#include <string>
+#include <vector>
 #include "sql/das/iter/sparse_retrieval/ob_das_tr_merge_iter.h"
 #include "storage/retrieval/ob_i_sparse_retrieval_iter.h"
 #include "storage/retrieval/ob_text_daat_iter.h"
@@ -110,6 +113,8 @@ private:
   int init_doc_length_est_param();
   void capture_first_count_row();
   void save_count_cache();
+  void capture_topk_batch(const int64_t count);
+  void save_topk_cache();
 private:
   static const int64_t INV_IDX_ROWKEY_COL_CNT = 2;
 private:
@@ -158,6 +163,16 @@ private:
   uint64_t replay_id_uint_;
   char *replay_id_buf_;
   int64_t replay_id_len_;
+  struct TopKReplayRow
+  {
+    bool id_is_uint_;
+    uint64_t id_uint_;
+    std::string id_str_;
+    double score_;
+  };
+  bool topk_replay_mode_;
+  int64_t topk_replay_emitted_;
+  std::vector<TopKReplayRow> topk_replay_rows_;
   bool is_inited_;
   DISALLOW_COPY_AND_ASSIGN(ObDASLegacyTRMergeIter);
 };

@@ -192,10 +192,12 @@ public:
       uint8_t has_block_max_scan_:1;
       uint8_t has_avg_doc_len_est_:1;
       uint8_t is_simple_match_count_:1;
-      uint8_t reserved_:2;
+      uint8_t is_simple_match_topk_:1;
+      uint8_t reserved_:1;
     };
   };
   bool is_simple_match_count() const { return is_simple_match_count_; }
+  bool is_simple_match_topk() const { return is_simple_match_topk_; }
   ObExpr *field_boost_expr_;
 };
 

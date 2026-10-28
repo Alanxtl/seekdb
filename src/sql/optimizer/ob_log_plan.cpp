@@ -12273,6 +12273,7 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
     need_calc_relevance = true;
     bool keep_explain_calc_relevance = false;
     bool is_simple_match_count = false;
+    bool is_simple_match_topk = false;
     // A COUNT over a natural-language MATCH only needs the boolean result of
     // the predicate.  The inverted-index postings already produce exactly the
     // documents for which MATCH is true, so BM25 and document-length
@@ -12319,6 +12320,25 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
         }
       }
     }
+    if (OB_SUCC(ret) && get_stmt()->is_select_stmt() &&
+        ObMatchAgainstMode::NATURAL_LANGUAGE_MODE == match_against->get_mode_flag()) {
+      const ObSelectStmt *select_stmt = static_cast<const ObSelectStmt *>(get_stmt());
+      bool score_in_projection = false;
+      const ObIArray<SelectItem> &items = select_stmt->get_select_items();
+      for (int64_t i = 0; !score_in_projection && i < items.count(); ++i) {
+        score_in_projection = raw_expr_contains_match(items.at(i).expr_, match_against);
+      }
+      if (!score_in_projection &&
+          1 == select_stmt->get_condition_exprs().count() &&
+          nullptr != select_stmt->get_limit_expr() &&
+          nullptr == select_stmt->get_offset_expr() &&
+          select_stmt->get_order_items().empty() &&
+          select_stmt->get_group_exprs().empty() &&
+          select_stmt->get_having_exprs().empty() &&
+          select_stmt->get_window_func_exprs().empty()) {
+        is_simple_match_topk = true;
+      }
+    }
     tr_info.match_expr_ = match_against;
     tr_info.inv_idx_tid_ = inv_idx_tid;
     tr_info.fwd_idx_tid_ = fwd_idx_tid;
@@ -12329,6 +12349,7 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
     tr_info.need_calc_relevance_ = need_calc_relevance;
     tr_info.print_calc_relevance_ = keep_explain_calc_relevance;
     tr_info.is_simple_match_count_ = is_simple_match_count;
+    tr_info.is_simple_match_topk_ = is_simple_match_topk;
   }
   return ret;
 }
@@ -12808,6 +12829,8 @@ int ObLogPlan::try_push_topn_into_text_retrieval_scan(ObLogicalOperator *&top,
     table_scan->get_text_retrieval_info().sort_key_.expr_ = sort_keys.at(0).expr_;
     table_scan->get_text_retrieval_info().sort_key_.order_type_ = sort_keys.at(0).order_type_;
     table_scan->get_text_retrieval_info().with_ties_ = (has_multi_sort_keys || is_fetch_with_ties);
+    table_scan->get_text_retrieval_info().is_simple_match_topk_ =
+        !has_multi_sort_keys && !is_fetch_with_ties;
     if (OB_FAIL(tmp_sort_keys.push_back(sort_keys.at(0)))) {
     } else if (OB_FAIL(table_scan->set_op_ordering(tmp_sort_keys))) {
     }

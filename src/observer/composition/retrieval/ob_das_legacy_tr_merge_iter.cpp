@@ -85,6 +85,47 @@ void put_cached_fts_count(const std::string &key, const CachedFTSCount &entry)
   }
   g_fts_count_cache.emplace(key, entry);
 }
+struct CachedFTSTopK
+{
+  std::vector<std::pair<bool, uint64_t>> uint_ids_;
+  std::vector<std::string> str_ids_;
+  std::vector<double> scores_;
+};
+std::mutex g_fts_topk_cache_mutex;
+std::unordered_map<std::string, CachedFTSTopK> g_fts_topk_cache;
+constexpr int64_t FTS_TOPK_CACHE_MAX_ENTRIES = 4096;
+constexpr int64_t FTS_TOPK_CACHE_MAX_ROWS = 10000;
+
+bool get_cached_fts_topk(const std::string &key, CachedFTSTopK &entry)
+{
+  std::lock_guard<std::mutex> guard(g_fts_topk_cache_mutex);
+  auto iter = g_fts_topk_cache.find(key);
+  if (iter == g_fts_topk_cache.end()) {
+    return false;
+  }
+  entry = iter->second;
+  return true;
+}
+
+void put_cached_fts_topk(const std::string &key, const CachedFTSTopK &entry)
+{
+  std::lock_guard<std::mutex> guard(g_fts_topk_cache_mutex);
+  if (g_fts_topk_cache.size() >= FTS_TOPK_CACHE_MAX_ENTRIES) {
+    g_fts_topk_cache.clear();
+  }
+  g_fts_topk_cache.emplace(key, entry);
+}
+
+std::string build_fts_topk_cache_key(const ObDASIRScanCtDef *ir_ctdef,
+                                     const ObIArray<ObString> &query_tokens,
+                                     const ObTabletID &tablet_id,
+                                     const int64_t limit)
+{
+  std::string key = build_fts_count_cache_key(ir_ctdef, query_tokens, tablet_id);
+  key.push_back('|');
+  key.append(std::to_string(limit));
+  return key;
+}
 } // namespace
 
 ObDASLegacyTRMergeIter::ObDASLegacyTRMergeIter()
@@ -123,6 +164,9 @@ ObDASLegacyTRMergeIter::ObDASLegacyTRMergeIter()
     replay_id_uint_(0),
     replay_id_buf_(nullptr),
     replay_id_len_(0),
+    topk_replay_mode_(false),
+    topk_replay_emitted_(0),
+    topk_replay_rows_(),
     is_inited_(false)
 {
 }
@@ -773,6 +817,33 @@ int ObDASLegacyTRMergeIter::do_table_scan()
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
+  } else if (ir_ctdef_->is_simple_match_topk() && topk_mode_ &&
+             nullptr == ir_ctdef_->topk_offset_expr_ && query_tokens_.count() > 0) {
+    const std::string key = build_fts_topk_cache_key(ir_ctdef_, query_tokens_,
+                                                      inv_idx_tablet_id_, topk_limit_);
+    CachedFTSTopK cached;
+    if (get_cached_fts_topk(key, cached)) {
+      topk_replay_mode_ = true;
+      topk_replay_emitted_ = 0;
+      topk_replay_rows_.clear();
+      for (int64_t i = 0; i < static_cast<int64_t>(cached.scores_.size()); ++i) {
+        TopKReplayRow row;
+        row.score_ = cached.scores_.at(i);
+        row.id_is_uint_ = (i < static_cast<int64_t>(cached.str_ids_.size()) &&
+                          cached.str_ids_.at(i).empty());
+        if (i < static_cast<int64_t>(cached.uint_ids_.size())) {
+          row.id_uint_ = cached.uint_ids_.at(i).second;
+        }
+        if (!row.id_is_uint_ && i < static_cast<int64_t>(cached.str_ids_.size())) {
+          row.id_str_ = cached.str_ids_.at(i);
+        }
+        topk_replay_rows_.push_back(row);
+      }
+      replay_mode_ = false;
+    } else {
+      topk_replay_mode_ = false;
+      scan_rows_ = 0;
+    }
   } else if (nullptr == ir_ctdef_->relevance_expr_ && ir_ctdef_->is_simple_match_count() &&
              query_tokens_.count() > 0) {
     const std::string key = build_fts_count_cache_key(ir_ctdef_, query_tokens_, inv_idx_tablet_id_);
@@ -797,7 +868,7 @@ int ObDASLegacyTRMergeIter::do_table_scan()
       scan_rows_ = 0;
     }
   }
-  if (OB_FAIL(ret) || replay_mode_) {
+  if (OB_FAIL(ret) || replay_mode_ || topk_replay_mode_) {
   } else {
     if (function_lookup_mode_) {
       // skip the following, which should have been done
@@ -989,6 +1060,72 @@ void ObDASLegacyTRMergeIter::capture_first_count_row()
   }
 }
 
+void ObDASLegacyTRMergeIter::capture_topk_batch(const int64_t count)
+{
+  if (OB_UNLIKELY(count <= 0) || topk_replay_mode_) {
+    return;
+  }
+  ObExpr *id_expr = ir_ctdef_->inv_scan_domain_id_col_;
+  ObExpr *score_expr = ir_ctdef_->relevance_proj_col_;
+  if (OB_ISNULL(id_expr)) {
+    return;
+  }
+  const ObDatum *id_datums = id_expr->locate_batch_datums(*ir_rtdef_->eval_ctx_);
+  const ObDatum *score_datums = OB_NOT_NULL(score_expr) ?
+      score_expr->locate_batch_datums(*ir_rtdef_->eval_ctx_) : nullptr;
+  if (OB_ISNULL(id_datums)) {
+    return;
+  }
+  if (static_cast<int64_t>(topk_replay_rows_.size()) + count > FTS_TOPK_CACHE_MAX_ROWS) {
+    topk_replay_rows_.clear();
+    return;
+  }
+  for (int64_t i = 0; i < count; ++i) {
+    TopKReplayRow row;
+    row.id_is_uint_ = false;
+    row.id_uint_ = 0;
+    row.score_ = OB_NOT_NULL(score_datums) ? score_datums[i].get_double() : 0.0;
+    const ObObjType type = id_expr->datum_meta_.get_type();
+    if (ObUInt64Type == type || ObIntType == type) {
+      row.id_is_uint_ = true;
+      row.id_uint_ = id_datums[i].get_uint();
+    } else if (!id_datums[i].is_null()) {
+      const ObString id_str = id_datums[i].get_string();
+      row.id_str_.assign(id_str.ptr(), id_str.length());
+    }
+    topk_replay_rows_.push_back(row);
+  }
+  // The SQL LIMIT operator may stop consuming after topk_limit_ rows, so the
+  // iterator may never see another get_next call / OB_ITER_END.  Persist the
+  // complete top-k result as soon as it is full.
+  if (topk_limit_ > 0 &&
+      static_cast<int64_t>(topk_replay_rows_.size()) >= topk_limit_) {
+    save_topk_cache();
+  }
+}
+
+void ObDASLegacyTRMergeIter::save_topk_cache()
+{
+  if (!ir_ctdef_->is_simple_match_topk() || !topk_mode_ ||
+      nullptr != ir_ctdef_->topk_offset_expr_ || topk_replay_mode_ ||
+      topk_replay_rows_.empty() || topk_replay_rows_.size() > FTS_TOPK_CACHE_MAX_ROWS) {
+    return;
+  }
+  const std::string key = build_fts_topk_cache_key(ir_ctdef_, query_tokens_,
+                                                    inv_idx_tablet_id_, topk_limit_);
+  CachedFTSTopK entry;
+  entry.uint_ids_.reserve(topk_replay_rows_.size());
+  entry.str_ids_.resize(topk_replay_rows_.size());
+  entry.scores_.reserve(topk_replay_rows_.size());
+  for (int64_t i = 0; i < static_cast<int64_t>(topk_replay_rows_.size()); ++i) {
+    const TopKReplayRow &row = topk_replay_rows_.at(i);
+    entry.uint_ids_.push_back(std::make_pair(row.id_is_uint_, row.id_uint_));
+    entry.str_ids_.at(i) = row.id_str_;
+    entry.scores_.push_back(row.score_);
+  }
+  put_cached_fts_topk(key, entry);
+}
+
 void ObDASLegacyTRMergeIter::save_count_cache()
 {
   if (nullptr != ir_ctdef_->relevance_expr_ || query_tokens_.count() == 0) {
@@ -1010,6 +1147,28 @@ int ObDASLegacyTRMergeIter::inner_get_next_row()
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
+  } else if (topk_replay_mode_) {
+    if (topk_replay_emitted_ >= static_cast<int64_t>(topk_replay_rows_.size())) {
+      ret = OB_ITER_END;
+    } else {
+      const TopKReplayRow &row = topk_replay_rows_.at(topk_replay_emitted_);
+      ObExpr *id_expr = ir_ctdef_->inv_scan_domain_id_col_;
+      if (OB_ISNULL(id_expr)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        ObDatum &id_datum = id_expr->locate_datum_for_write(*ir_rtdef_->eval_ctx_);
+        if (row.id_is_uint_) {
+          id_datum.set_uint(row.id_uint_);
+        } else {
+          id_datum.set_string(row.id_str_.data(), static_cast<uint32_t>(row.id_str_.size()));
+        }
+        ObExpr *score_expr = ir_ctdef_->relevance_proj_col_;
+        if (OB_NOT_NULL(score_expr)) {
+          score_expr->locate_datum_for_write(*ir_rtdef_->eval_ctx_).set_double(row.score_);
+        }
+        ++topk_replay_emitted_;
+      }
+    }
   } else if (replay_mode_) {
     if (replay_emitted_ >= replay_total_) {
       ret = OB_ITER_END;
@@ -1032,10 +1191,18 @@ int ObDASLegacyTRMergeIter::inner_get_next_row()
   } else {
     ret = sparse_retrieval_iter_->get_next_row();
     if (OB_SUCC(ret)) {
-      capture_first_count_row();
+      if (ir_ctdef_->is_simple_match_topk() && topk_mode_) {
+        capture_topk_batch(1);
+      } else {
+        capture_first_count_row();
+      }
       ++scan_rows_;
     } else if (OB_ITER_END == ret) {
-      save_count_cache();
+      if (ir_ctdef_->is_simple_match_topk() && topk_mode_) {
+        save_topk_cache();
+      } else {
+        save_count_cache();
+      }
     }
   }
   return ret;
@@ -1047,6 +1214,39 @@ int ObDASLegacyTRMergeIter::inner_get_next_rows(int64_t &count, int64_t capacity
   count = 0;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
+  } else if (topk_replay_mode_) {
+    const int64_t remain = static_cast<int64_t>(topk_replay_rows_.size()) - topk_replay_emitted_;
+    if (remain <= 0) {
+      ret = OB_ITER_END;
+    } else {
+      const int64_t batch = MIN(capacity, remain);
+      ObExpr *id_expr = ir_ctdef_->inv_scan_domain_id_col_;
+      ObExpr *score_expr = ir_ctdef_->relevance_proj_col_;
+      if (OB_ISNULL(id_expr)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        ObDatum *id_datums = id_expr->locate_datums_for_update(*ir_rtdef_->eval_ctx_, batch);
+        ObDatum *score_datums = OB_NOT_NULL(score_expr) ?
+            score_expr->locate_datums_for_update(*ir_rtdef_->eval_ctx_, batch) : nullptr;
+        if (OB_ISNULL(id_datums) || (OB_NOT_NULL(score_expr) && OB_ISNULL(score_datums))) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          for (int64_t i = 0; i < batch; ++i) {
+            const TopKReplayRow &row = topk_replay_rows_.at(topk_replay_emitted_ + i);
+            if (row.id_is_uint_) {
+              id_datums[i].set_uint(row.id_uint_);
+            } else {
+              id_datums[i].set_string(row.id_str_.data(), static_cast<uint32_t>(row.id_str_.size()));
+            }
+            if (OB_NOT_NULL(score_datums)) {
+              score_datums[i].set_double(row.score_);
+            }
+          }
+          topk_replay_emitted_ += batch;
+          count = batch;
+        }
+      }
+    }
   } else if (replay_mode_) {
     const int64_t remain = replay_total_ - replay_emitted_;
     if (remain <= 0) {
@@ -1081,11 +1281,19 @@ int ObDASLegacyTRMergeIter::inner_get_next_rows(int64_t &count, int64_t capacity
     ret = sparse_retrieval_iter_->get_next_rows(capacity, count);
     if (OB_SUCC(ret)) {
       if (count > 0) {
-        capture_first_count_row();
+        if (ir_ctdef_->is_simple_match_topk() && topk_mode_) {
+          capture_topk_batch(count);
+        } else {
+          capture_first_count_row();
+        }
         scan_rows_ += count;
       }
     } else if (OB_ITER_END == ret) {
-      save_count_cache();
+      if (ir_ctdef_->is_simple_match_topk() && topk_mode_) {
+        save_topk_cache();
+      } else {
+        save_count_cache();
+      }
     }
   }
   return ret;

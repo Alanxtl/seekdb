@@ -50,6 +50,7 @@ struct ObTextRetrievalInfo
     need_calc_relevance_(true),
     print_calc_relevance_(false),
     is_simple_match_count_(false),
+    is_simple_match_topk_(false),
     inv_idx_tid_(OB_INVALID_ID),
     fwd_idx_tid_(OB_INVALID_ID),
     doc_id_idx_tid_(OB_INVALID_ID),
@@ -82,6 +83,7 @@ struct ObTextRetrievalInfo
   bool need_calc_relevance_;  // match expr just for retireval (accurate score is not required)
   bool print_calc_relevance_; // keep the historical EXPLAIN output for COUNT optimization
   bool is_simple_match_count_; // COUNT over a bare MATCH predicate, safe to replay
+  bool is_simple_match_topk_;  // LIMIT over a bare MATCH predicate, safe to replay
   uint64_t inv_idx_tid_;  // chosen aux inverted index table id (word-doc)
   uint64_t fwd_idx_tid_;  // chosen aux forward index table id (doc-word)
   uint64_t doc_id_idx_tid_; // chosen aux doc_id index table id (doc-rowkey)

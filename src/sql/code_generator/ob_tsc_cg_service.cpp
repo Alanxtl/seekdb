@@ -3021,6 +3021,7 @@ int ObTscCgService::generate_text_ir_spec_exprs(const ObTextRetrievalInfo &tr_in
   } else {
     text_ir_scan_ctdef.mode_flag_ = tr_info.match_expr_->get_mode_flag();
     text_ir_scan_ctdef.is_simple_match_count_ = tr_info.is_simple_match_count_;
+    text_ir_scan_ctdef.is_simple_match_topk_ = tr_info.is_simple_match_topk_;
     const UIntFixedArray &inv_scan_col_id = text_ir_scan_ctdef.get_inv_idx_scan_ctdef()->access_column_ids_;
     const ObColumnRefRawExpr *doc_id_column = tr_info.docid_or_rowkey_column_;
     const ObColumnRefRawExpr *doc_length_column = tr_info.doc_length_column_;
