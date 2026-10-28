@@ -47,7 +47,10 @@ class ObMemtableMutatorIterator;
 // report the dml stat to ObOptStatMonitorManager
 struct ObReportedDmlStat
 {
-  static constexpr int64_t REPORT_INTERVAL = 1_s;
+  // Keep optimizer DML statistics fresh for short write bursts.  AI column
+  // vector-index plans are generated immediately after the publishing
+  // transaction commits and must not fall back to the default row count.
+  static constexpr int64_t REPORT_INTERVAL = 1_ms;
   ObReportedDmlStat() { reset(); }
   ~ObReportedDmlStat() = default;
   void reset() {
