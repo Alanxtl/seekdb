@@ -71,7 +71,8 @@ public:
       parallel_(1),
       buffer_size_(DEFAULT_BUFFER_SIZE),
       is_overwrite_(false),
-      external_properties_(alloc)
+      external_properties_(alloc),
+      header_str_(alloc)
   {
   }
 
@@ -91,6 +92,7 @@ public:
   int64_t buffer_size_;
   bool is_overwrite_;
   ObExternalFileFormat::StringData external_properties_;
+  ObExternalFileFormat::StringData header_str_;
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256LL * 1024 * 1024;
   static const int64_t DEFAULT_BUFFER_SIZE = 1LL * 1024 * 1024;
 };
@@ -101,6 +103,7 @@ public:
   ObSelectIntoOp(ObExecContext &exec_ctx, const ObOpSpec &spec, ObOpInput *input)
     : ObOperator(exec_ctx, spec, input),
       top_limit_cnt_(INT64_MAX),
+      header_written_(false),
       is_first_(true),
       field_str_(),
       line_str_(),
@@ -265,6 +268,7 @@ private:
 
 private:
   int64_t top_limit_cnt_;
+  bool header_written_;
   bool is_first_;
   ObObj field_str_;
   ObObj line_str_;

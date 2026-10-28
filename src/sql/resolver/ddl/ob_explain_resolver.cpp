@@ -17,6 +17,9 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_explain_resolver.h"
 #include "sql/resolver/ob_resolver.h"
+#include "sql/parser/ob_parser.h"
+#include "sql/resolver/dml/ob_select_stmt.h"
+#include "lib/string/ob_sql_string.h"
 
 using namespace oceanbase;
 using namespace sql;
@@ -145,3 +148,111 @@ int ObExplainResolver::resolve(const ParseNode &parse_tree)
 
   return ret;
 }
+
+namespace oceanbase
+{
+namespace sql
+{
+namespace
+{
+const char *describe_type_name(const ObObjType type)
+{
+  switch (type) {
+    case common::ObTinyIntType:
+    case common::ObSmallIntType:
+    case common::ObMediumIntType:
+    case common::ObInt32Type:
+      return "BOOLEAN";
+    case common::ObIntType:
+    case common::ObUInt64Type:
+      return "BIGINT";
+    case common::ObFloatType:
+    case common::ObDoubleType:
+    case common::ObUFloatType:
+    case common::ObUDoubleType:
+      return "DOUBLE";
+    case common::ObDateType:
+      return "DATE";
+    case common::ObDateTimeType:
+    case common::ObTimestampType:
+      return "DATETIME";
+    case common::ObNullType:
+      return "NULL";
+    default:
+      return "VARCHAR";
+  }
+}
+
+int append_sql_string(ObSqlString &sql, const ObString &value)
+{
+  int ret = common::OB_SUCCESS;
+  OZ (sql.append("'"));
+  for (int64_t i = 0; OB_SUCC(ret) && i < value.length(); ++i) {
+    const char c = value.ptr()[i];
+    if (c == '\'' || c == '\\') {
+      OZ (sql.append(&c, 1));
+    }
+    OZ (sql.append(&c, 1));
+  }
+  OZ (sql.append("'"));
+  return ret;
+}
+} // namespace
+
+int ObExplainResolver::resolve_describe_select(const ParseNode &select_node)
+{
+  int ret = common::OB_SUCCESS;
+  ObResolver inner_resolver(params_);
+  ObStmt *inner_stmt = nullptr;
+  ObSelectStmt *select_stmt = nullptr;
+  ObSqlString sql;
+  if (OB_FAIL(inner_resolver.resolve(ObResolver::IS_NOT_PREPARED_STMT, select_node, inner_stmt))) {
+  } else if (OB_ISNULL(select_stmt = static_cast<ObSelectStmt *>(inner_stmt))) {
+    ret = common::OB_ERR_UNEXPECTED;
+  } else {
+    const ObIArray<SelectItem> &items = select_stmt->get_select_items();
+    for (int64_t i = 0; OB_SUCC(ret) && i < items.count(); ++i) {
+      const SelectItem &item = items.at(i);
+      const ObString &name = item.alias_name_.empty() ? item.expr_name_ : item.alias_name_;
+      const ObExprResType &type = item.expr_->get_result_type();
+      const char *null_flag = type.has_result_flag(NOT_NULL_FLAG) ? "NO" : "YES";
+      if (i > 0) {
+        OZ (sql.append(" UNION ALL "));
+      }
+      OZ (sql.append("SELECT "));
+      OZ (append_sql_string(sql, name));
+      OZ (sql.append(" AS column_name, "));
+      OZ (append_sql_string(sql, ObString::make_string(describe_type_name(type.get_type()))));
+      OZ (sql.append(" AS column_type, "));
+      OZ (append_sql_string(sql, ObString::make_string(null_flag)));
+      OZ (sql.append(" AS `null`, NULL AS `key`, NULL AS `default`, NULL AS extra"));
+    }
+    if (OB_SUCC(ret)) {
+      ParseResult parse_result;
+      ObParser parser(*allocator_, session_info_->get_sql_mode(), session_info_->get_charsets4parser());
+      ObStmt *meta_stmt = nullptr;
+      if (OB_FAIL(parser.parse(sql.string(), parse_result))) {
+      } else if (OB_ISNULL(parse_result.result_tree_) ||
+                 OB_ISNULL(parse_result.result_tree_->children_) ||
+                 parse_result.result_tree_->num_child_ < 1 ||
+                 OB_ISNULL(parse_result.result_tree_->children_[0])) {
+        ret = common::OB_ERR_UNEXPECTED;
+      } else {
+        ObResolver meta_resolver(params_);
+        if (OB_FAIL(meta_resolver.resolve(ObResolver::IS_NOT_PREPARED_STMT,
+                                          *parse_result.result_tree_->children_[0], meta_stmt))) {
+        } else if (OB_ISNULL(meta_stmt)) {
+          ret = common::OB_ERR_UNEXPECTED;
+        } else {
+          set_basic_stmt(meta_stmt);
+        }
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  }
+  return ret;
+}
+
+} // namespace sql
+} // namespace oceanbase

@@ -10983,9 +10983,22 @@
     "base_value": "0",
     "data_type": "bool",
     "info": "Reject access to AI columns while any row in a referenced column is not ready",
-    "flags": "SESSION | NEED_SERIALIZE | MYSQL_ONLY | INFLUENCE_PLAN",
+    "flags": "GLOBAL | SESSION | NEED_SERIALIZE | MYSQL_ONLY | INFLUENCE_PLAN",
     "publish_version": "",
     "info_cn": "AI 列严格读取",
+    "background_cn": "",
+    "ref_url": ""
+  },
+  "enable_file_sql": {
+    "id": 10755,
+    "name": "enable_file_sql",
+    "default_value": "0",
+    "base_value": "0",
+    "data_type": "bool",
+    "info": "Enable querying local CSV, JSONL and Parquet files through SQL",
+    "flags": "GLOBAL | SESSION | NEED_SERIALIZE | MYSQL_ONLY | INFLUENCE_PLAN",
+    "publish_version": "",
+    "info_cn": "开启本地文件 SQL 查询",
     "background_cn": "",
     "ref_url": ""
   }

@@ -383,7 +383,7 @@ END_P SET_VAR DELIMITER
 %type <node> subpartition_template_option subpartition_individual_option opt_hash_partition_list hash_partition_list hash_partition_element opt_hash_subpartition_list hash_subpartition_list hash_subpartition_element opt_subpartition_list opt_engine_option
 %type <node> date_unit date_params timestamp_params
 %type <node> drop_table_stmt table_list drop_view_stmt table_or_tables
-%type <node> explain_stmt explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
+%type <node> explain_stmt copy_stmt opt_copy_options copy_option_list copy_option explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
 %type <node> expr_list expr expr_const conf_const simple_expr simple_expr_list expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
 %type <node> column_ref multi_delete_table
 %type <node> case_expr func_expr in_expr sub_query_flag search_expr
@@ -582,6 +582,7 @@ stmt:
   | drop_table_stmt         { $$ = $1; check_question_mark($$, result); }
   | drop_view_stmt          { $$ = $1; check_question_mark($$, result); }
   | explain_stmt            { $$ = $1; question_mark_issue($$, result); }
+  | copy_stmt              { $$ = $1; check_question_mark($$, result); }
   | create_outline_stmt     { $$ = $1; question_mark_issue($$, result); }
   | alter_outline_stmt      { $$ = $1; question_mark_issue($$, result); }
   | drop_outline_stmt       { $$ = $1; check_question_mark($$, result); }
@@ -10846,6 +10847,21 @@ tbl_name
 {
   $$ = $1;
 }
+| NAME_OB '(' expr_list ')' AS relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE, 3, $1, $3, $6);
+  $$->sql_str_off_ = @1.first_column;
+}
+| NAME_OB '(' expr_list ')' relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE, 3, $1, $3, $5);
+  $$->sql_str_off_ = @1.first_column;
+}
+| NAME_OB '(' expr_list ')'
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE, 3, $1, $3, NULL);
+  $$->sql_str_off_ = @1.first_column;
+}
 | '(' table_references ')'
 {
   $$ = $2;
@@ -12313,12 +12329,91 @@ explain_or_desc relation_factor opt_desc_column_option
   (void)($1);
   malloc_non_terminal_node($$, result->malloc_pool_, T_EXPLAIN, 5, $4, NULL, NULL, NULL, $5);
 }
+| DESCRIBE select_stmt
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_DESCRIBE_SELECT, 1, $2);
+}
+| DESC select_stmt
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_DESCRIBE_SELECT, 1, $2);
+}
+| DESCRIBE relation_factor opt_desc_column_option
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 0;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, $$, $2, NULL, $3);
+}
 ;
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+;
+
+copy_stmt:
+COPY '(' select_stmt ')' TO STRING_VALUE opt_copy_options
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TABLE, 3, $3, $6, $7);
+}
+;
+
+opt_copy_options:
+/*empty*/ { $$ = NULL; }
+| '(' copy_option_list ')' { $$ = $2; }
+;
+
+copy_option_list:
+copy_option
+{
+  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
+}
+| copy_option_list ',' copy_option
+{
+  push_back_list(result->malloc_pool_, result, $$, $1, $3);
+}
+;
+
+copy_option:
+FORMAT relation_name
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_COPY_OPTION);
+  $$->value_ = 1;
+  $$->str_value_ = $2->str_value_;
+  $$->str_len_ = $2->str_len_;
+}
+| NAME_OB
+{
+  if (OB_UNLIKELY(NULL == $1->str_value_) || 6 != $1->str_len_ ||
+      0 != strncasecmp($1->str_value_, "header", 6)) {
+    yyerror(&@1, result, "unsupported COPY option\n");
+    YYERROR;
+  }
+  malloc_terminal_node($$, result->malloc_pool_, T_COPY_OPTION);
+  $$->value_ = 2;
+}
+| NAME_OB STRING_VALUE
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_COPY_OPTION);
+  if (OB_UNLIKELY(NULL == $1->str_value_)) {
+    yyerror(&@1, result, "invalid COPY option\n");
+    YYERROR;
+  } else if (7 == $1->str_len_ && 0 == strncasecmp($1->str_value_, "nullstr", 7)) {
+    $$->value_ = 3;
+  } else if (9 == $1->str_len_ && 0 == strncasecmp($1->str_value_, "delimiter", 9)) {
+    $$->value_ = 4;
+  } else {
+    yyerror(&@1, result, "unsupported COPY option\n");
+    YYERROR;
+  }
+  $$->str_value_ = $2->str_value_;
+  $$->str_len_ = $2->str_len_;
+}
+| DELIMITER STRING_VALUE
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_COPY_OPTION);
+  $$->value_ = 4;
+  $$->str_value_ = $2->str_value_;
+  $$->str_len_ = $2->str_len_;
+}
 ;
 
 explainable_stmt:

@@ -43,6 +43,9 @@
 #include "sql/resolver/ddl/ob_drop_database_resolver.h"
 #include "sql/resolver/ddl/ob_create_view_resolver.h"
 #include "sql/resolver/ddl/ob_explain_resolver.h"
+#include "sql/resolver/dml/ob_select_stmt.h"
+#include "query/engine/cmd/ob_load_data_parser.h"
+#include "lib/string/ob_sql_string.h"
 #include "sql/resolver/ddl/ob_create_outline_resolver.h"
 #include "sql/resolver/ddl/ob_alter_outline_resolver.h"
 #include "sql/resolver/ddl/ob_drop_outline_resolver.h"
@@ -136,6 +139,109 @@ int ObResolver::select_stmt_resolver_func(ObResolverParams &params, const ParseN
   }
   return ret;
 }
+
+
+namespace
+{
+int resolve_copy_stmt(ObResolverParams &params, const ParseNode &tree, ObStmt *&stmt)
+{
+  int ret = common::OB_SUCCESS;
+  if (OB_UNLIKELY(T_COPY_TABLE != tree.type_ || 3 != tree.num_child_ ||
+                  OB_ISNULL(tree.children_[0]) || OB_ISNULL(tree.children_[1]) ||
+                  OB_ISNULL(params.allocator_))) {
+    ret = common::OB_ERR_UNEXPECTED;
+  } else {
+    ObResolver inner_resolver(params);
+    ObStmt *inner_stmt = nullptr;
+    ObSelectStmt *select_stmt = nullptr;
+    if (OB_FAIL(inner_resolver.resolve(ObResolver::IS_NOT_PREPARED_STMT,
+                                        *tree.children_[0], inner_stmt))) {
+    } else if (OB_ISNULL(select_stmt = static_cast<ObSelectStmt *>(inner_stmt))) {
+      ret = common::OB_ERR_UNEXPECTED;
+    } else {
+      ObString outfile;
+      const ParseNode *path_node = tree.children_[1];
+      if (T_QUESTIONMARK == path_node->type_ && nullptr != params.param_list_ &&
+          path_node->value_ >= 0 && path_node->value_ < params.param_list_->count()) {
+        OZ (params.param_list_->at(path_node->value_).get_string(outfile));
+      } else if (nullptr != path_node->str_value_) {
+        outfile.assign_ptr(path_node->str_value_, path_node->str_len_);
+      } else {
+        ret = common::OB_INVALID_ARGUMENT;
+      }
+      bool header = false;
+      char delimiter = ',';
+      const ParseNode *options = tree.children_[2];
+      if (OB_SUCC(ret) && nullptr != options) {
+        for (int64_t i = 0; OB_SUCC(ret) && i < options->num_child_; ++i) {
+          const ParseNode *option = options->children_[i];
+          if (OB_ISNULL(option) || T_COPY_OPTION != option->type_) {
+            ret = common::OB_ERR_UNEXPECTED;
+          } else if (1 == option->value_) {
+            if (nullptr == option->str_value_ ||
+                !ObCharset::case_insensitive_equal(ObString(option->str_len_, option->str_value_),
+                                                   ObString::make_string("csv"))) {
+              ret = common::OB_NOT_SUPPORTED;
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "COPY format");
+            }
+          } else if (2 == option->value_) {
+            header = true;
+          } else if (4 == option->value_ && nullptr != option->str_value_ &&
+                     option->str_len_ > 0) {
+            delimiter = option->str_value_[0];
+          }
+        }
+      }
+      if (OB_SUCC(ret)) {
+        void *buf = params.allocator_->alloc(sizeof(ObSelectIntoItem));
+        ObSelectIntoItem *into = nullptr;
+        if (OB_ISNULL(buf)) {
+          ret = common::OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          into = new (buf) ObSelectIntoItem();
+        }
+        if (OB_SUCC(ret)) {
+          ObString copied_path;
+          OZ (ob_write_string(*params.allocator_, outfile, copied_path));
+          ObObj path_obj;
+          path_obj.set_varchar(copied_path);
+          path_obj.set_collation_type(ObCharset::get_system_collation());
+          into->into_type_ = T_INTO_OUTFILE;
+          into->outfile_name_ = path_obj;
+          into->is_single_ = true;
+          ObExternalFileFormat fmt;
+          fmt.format_type_ = ObExternalFileFormat::CSV_FORMAT;
+          fmt.csv_format_.field_term_str_.assign_ptr(&delimiter, 1);
+          fmt.csv_format_.line_term_str_.assign_ptr("\n", 1);
+          fmt.csv_format_.field_enclosed_char_ = INT64_MAX;
+          fmt.csv_format_.field_escaped_char_ = INT64_MAX;
+          fmt.csv_format_.is_optional_ = false;
+          fmt.csv_format_.cs_type_ = common::CHARSET_UTF8MB4;
+          OZ (fmt.to_string_with_alloc(into->external_properties_, *params.allocator_, true));
+        }
+        if (OB_SUCC(ret) && header) {
+          ObSqlString header_sql;
+          const ObIArray<SelectItem> &items = select_stmt->get_select_items();
+          for (int64_t i = 0; OB_SUCC(ret) && i < items.count(); ++i) {
+            const ObString &name = items.at(i).alias_name_.empty() ?
+                                   items.at(i).expr_name_ : items.at(i).alias_name_;
+            if (i > 0) { OZ (header_sql.append(",")); }
+            OZ (header_sql.append(name));
+          }
+          ObString copied_header;
+          OZ (ob_write_string(*params.allocator_, header_sql.string(), copied_header));
+          into->header_str_ = copied_header;
+        }
+        if (OB_SUCC(ret)) {
+          select_stmt->set_select_into(into);
+          stmt = select_stmt;
+        }
+      }
+    }
+  }
+  return ret;
+}
+} // namespace
 
 int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObStmt *&stmt)
 {
@@ -474,6 +580,18 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
       }
       case T_EXPLAIN: {
         REGISTER_STMT_RESOLVER(Explain);
+        break;
+      }
+      case T_COPY_TABLE: {
+        OZ (resolve_copy_stmt(params_, parse_tree, stmt));
+        break;
+      }
+      case T_DESCRIBE_SELECT: {
+        ObExplainResolver describe_resolver(params_);
+        if (OB_FAIL(describe_resolver.resolve_describe_select(*parse_tree.children_[0]))) {
+        } else if (OB_ISNULL(stmt = describe_resolver.get_basic_stmt())) {
+          ret = OB_ERR_UNEXPECTED;
+        }
         break;
       }
       case T_ALTER_SYSTEM_SET: {

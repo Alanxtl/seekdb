@@ -1672,6 +1672,9 @@ int ObResolverUtils::resolve_obj_access_ref_node(ObRawExprFactory &expr_factory,
 stmt::StmtType ObResolverUtils::get_stmt_type_by_item_type(const ObItemType item_type)
 {
   stmt::StmtType type;
+  if (T_DESCRIBE_SELECT == item_type) {
+    return stmt::T_EXPLAIN;
+  }
   switch (item_type) {
 #define SET_STMT_TYPE(item_type) \
   case item_type: {              \
