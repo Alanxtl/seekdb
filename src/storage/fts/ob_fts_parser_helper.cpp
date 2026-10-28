@@ -392,8 +392,6 @@ int ObFTParseHelper::segment(
       doc_length = add_word.get_add_word_count();
     }
   }
-  LOG_DEBUG("ft parse segment", K(ret), K(type), K(add_word_flag_), K(parser_name_),
-      K(ObString(fulltext_len, fulltext)), K(words.size()));
   return ret;
 }
 

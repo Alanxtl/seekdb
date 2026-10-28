@@ -12168,6 +12168,24 @@ int ObLogPlan::prepare_text_retrieval_merge(const ObIArray<ObRawExpr *> &merge_m
   return ret;
 }
 
+namespace
+{
+bool raw_expr_contains_match(const ObRawExpr *expr, const ObRawExpr *match_expr)
+{
+  bool contains = false;
+  if (OB_NOT_NULL(expr) && OB_NOT_NULL(match_expr)) {
+    if (expr == match_expr) {
+      contains = true;
+    } else {
+      for (int64_t i = 0; !contains && i < expr->get_param_count(); ++i) {
+        contains = raw_expr_contains_match(expr->get_param_expr(i), match_expr);
+      }
+    }
+  }
+  return contains;
+}
+} // namespace
+
 int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
                                            const uint64_t index_table_id,
                                            ObMatchFunRawExpr *match_against,
@@ -12252,18 +12270,45 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
     }
   }
   if (OB_SUCC(ret)) {
-    /*
-    if (OB_FAIL(ObTransformUtils::check_need_calc_match_score(get_optimizer_context().get_exec_ctx(),
-                                                              get_stmt(),
-                                                              match_against,
-                                                              need_calc_relevance,
-                                                              constraints))) {
-      LOG_WARN("failed to check need calc relevance", K(ret));
-    } else if (!need_calc_relevance &&
-               OB_FAIL(append_array_no_dup(get_optimizer_context().get_query_ctx()->all_expr_constraints_, constraints))) {
-      LOG_WARN("failed to append array no dup", K(ret));
+    need_calc_relevance = true;
+    bool keep_explain_calc_relevance = false;
+    // A COUNT over a natural-language MATCH only needs the boolean result of
+    // the predicate.  The inverted-index postings already produce exactly the
+    // documents for which MATCH is true, so BM25 and document-length
+    // estimation can be skipped.  Keep the historical EXPLAIN annotation so
+    // existing plans and result files remain stable.
+    if (get_stmt()->is_select_stmt() &&
+        ObMatchAgainstMode::NATURAL_LANGUAGE_MODE == match_against->get_mode_flag()) {
+      const ObSelectStmt *select_stmt = static_cast<const ObSelectStmt *>(get_stmt());
+      const ObIArray<SelectItem> &items = select_stmt->get_select_items();
+      if (1 == items.count() && nullptr != items.at(0).expr_ &&
+          T_FUN_COUNT == items.at(0).expr_->get_expr_type() &&
+          select_stmt->get_order_items().empty() &&
+          select_stmt->get_group_exprs().empty() &&
+          select_stmt->get_rollup_exprs().empty() &&
+          select_stmt->get_window_func_exprs().empty() &&
+          nullptr == select_stmt->get_limit_expr() &&
+          nullptr == select_stmt->get_offset_expr()) {
+        bool score_required = false;
+        for (int64_t i = 0; OB_SUCC(ret) && !score_required &&
+                            i < select_stmt->get_condition_exprs().count(); ++i) {
+          bool condition_need_score = false;
+          if (OB_FAIL(ObTransformUtils::inner_check_need_calc_match_score(
+                         get_optimizer_context().get_exec_ctx(),
+                         select_stmt->get_condition_exprs().at(i),
+                         match_against,
+                         condition_need_score,
+                         constraints))) {
+          } else if (condition_need_score) {
+            score_required = true;
+          }
+        }
+        if (OB_SUCC(ret) && !score_required) {
+          need_calc_relevance = false;
+          keep_explain_calc_relevance = true;
+        }
+      }
     }
-    */
     tr_info.match_expr_ = match_against;
     tr_info.inv_idx_tid_ = inv_idx_tid;
     tr_info.fwd_idx_tid_ = fwd_idx_tid;
@@ -12272,6 +12317,7 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
     tr_info.data_table_id_ = ref_table_id;
     tr_info.pushdown_match_filter_ = nullptr;
     tr_info.need_calc_relevance_ = need_calc_relevance;
+    tr_info.print_calc_relevance_ = keep_explain_calc_relevance;
   }
   return ret;
 }
