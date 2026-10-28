@@ -130,8 +130,8 @@ public:
   ObTableScanCtDef(common::ObIAllocator &allocator)
     : snapshot_item_(),
       bnlj_param_idxs_(allocator),
-      ai_column_references_(allocator),
       scan_flags_(),
+      ai_column_references_(allocator),
       scan_ctdef_(allocator),
       lookup_ctdef_(nullptr),
       lookup_loc_meta_(nullptr),
