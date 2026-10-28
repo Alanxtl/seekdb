@@ -141,6 +141,81 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
   TokenizeParam param;
   std::string cache_key;
   std::string cached_result;
+  bool fast_cacheable = (expr.arg_cnt_ >= 1 && expr.arg_cnt_ <= 3);
+
+  // Check constant arguments before building the normalized TokenizeParam.
+  // This avoids parser-property reformatting and dictionary setup on every
+  // execution of the same literal TOKENIZE expression.
+  for (int64_t i = 0; fast_cacheable && i < expr.arg_cnt_; ++i) {
+    if (OB_ISNULL(expr.args_[i]) || expr.args_[i]->type_ == T_REF_COLUMN) {
+      fast_cacheable = false;
+    }
+  }
+  if (fast_cacheable) {
+    ObString fast_text;
+    ObString fast_parser;
+    ObString fast_properties;
+    bool parser_missing = (expr.arg_cnt_ < 2);
+    for (int64_t i = 0; OB_SUCC(ret) && i < expr.arg_cnt_; ++i) {
+      ObDatum *arg_datum = nullptr;
+      if (OB_FAIL(expr.args_[i]->eval(ctx, arg_datum))) {
+      } else if (OB_ISNULL(arg_datum)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (arg_datum->is_null()) {
+        if (1 == i) {
+          parser_missing = true;
+        }
+      } else if (0 == i) {
+        fast_text = arg_datum->get_string();
+      } else if (1 == i) {
+        fast_parser = arg_datum->get_string();
+      } else {
+        fast_properties = arg_datum->get_string();
+      }
+    }
+    if (OB_SUCC(ret) && parser_missing) {
+      fast_parser = ObString::make_string(OB_DEFAULT_FULLTEXT_PARSER_NAME);
+    }
+    if (OB_SUCC(ret)) {
+      cache_key.append(std::to_string(expr.arg_cnt_));
+      cache_key.push_back('|');
+      cache_key.append(std::to_string(static_cast<int64_t>(
+          expr.args_[0]->obj_meta_.get_collation_type())));
+      cache_key.push_back('|');
+      cache_key.append(std::to_string(fast_parser.length()));
+      cache_key.push_back(':');
+      if (nullptr != fast_parser.ptr()) {
+        cache_key.append(fast_parser.ptr(), fast_parser.length());
+      }
+      cache_key.push_back('|');
+      cache_key.append(std::to_string(fast_properties.length()));
+      cache_key.push_back(':');
+      if (nullptr != fast_properties.ptr()) {
+        cache_key.append(fast_properties.ptr(), fast_properties.length());
+      }
+      cache_key.push_back('|');
+      cache_key.append(std::to_string(fast_text.length()));
+      cache_key.push_back(':');
+      if (nullptr != fast_text.ptr()) {
+        cache_key.append(fast_text.ptr(), fast_text.length());
+      }
+      if (tokenize_cache_get(cache_key, cached_result)) {
+        const int64_t cached_len = static_cast<int64_t>(cached_result.size());
+        ObString cached_str(static_cast<int32_t>(cached_len), cached_result.data());
+        if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr,
+                                                        ctx,
+                                                        expr_datum,
+                                                        cached_str,
+                                                        &temp_allocator))) {
+        }
+      } else {
+        fast_cacheable = true;
+      }
+    }
+  }
+  if (OB_SUCC(ret) && fast_cacheable && !cached_result.empty()) {
+    return ret;
+  }
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
@@ -154,7 +229,8 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
                                                        json_result,
                                                        expr_datum))) {
     }
-  } else if (FALSE_IT(cache_key = tokenize_cache_key(
+  } else if (cache_key.empty() &&
+             FALSE_IT(cache_key = tokenize_cache_key(
                  param.parser_name_,
                  param.properties_,
                  static_cast<int64_t>(param.meta_.get_collation_type()),
