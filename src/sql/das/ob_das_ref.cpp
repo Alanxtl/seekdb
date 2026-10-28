@@ -302,15 +302,24 @@ int ObDASRef::execute_all_task()
   } else if (OB_FAIL(execute_all_task(aggregated_tasks_))) {
   } else {
     DASTaskIter task_iter = begin_task_iter();
+    bool has_dml_task = false;
     while (OB_SUCC(ret) && !task_iter.is_end()) {
       int end_ret = OB_SUCCESS;
       ObIDASTaskOp *das_op = nullptr;
       if (OB_ISNULL(das_op = *task_iter)) {
         ret = OB_ERR_UNEXPECTED;
-      } else if (OB_FAIL(das_op->record_task_result_to_rtdef())) {
       } else {
-        ++task_iter;
+        has_dml_task = has_dml_task || IS_DAS_DML_OP(*das_op);
+        if (OB_FAIL(das_op->record_task_result_to_rtdef())) {
+        } else {
+          ++task_iter;
+        }
       }
+    }
+    if (OB_SUCC(ret) && has_dml_task) {
+      // Invalidate FTS count-result caches after any write.  This is a small
+      // global epoch bump; read queries never take this path.
+      bump_fts_data_epoch();
     }
   }
 

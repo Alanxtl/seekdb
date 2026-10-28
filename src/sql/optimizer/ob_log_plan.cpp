@@ -12272,6 +12272,7 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
   if (OB_SUCC(ret)) {
     need_calc_relevance = true;
     bool keep_explain_calc_relevance = false;
+    bool is_simple_match_count = false;
     // A COUNT over a natural-language MATCH only needs the boolean result of
     // the predicate.  The inverted-index postings already produce exactly the
     // documents for which MATCH is true, so BM25 and document-length
@@ -12306,6 +12307,15 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
         if (OB_SUCC(ret) && !score_required) {
           need_calc_relevance = false;
           keep_explain_calc_relevance = true;
+          const ObAggFunRawExpr *count_expr = static_cast<const ObAggFunRawExpr *>(items.at(0).expr_);
+          bool count_all_rows = (0 == count_expr->get_param_count());
+          if (1 == count_expr->get_param_count()) {
+            const ObRawExpr *count_param = count_expr->get_param_expr(0);
+            count_all_rows = OB_NOT_NULL(count_param) &&
+                (T_STAR == count_param->get_expr_type() || T_INT == count_param->get_expr_type());
+          }
+          is_simple_match_count = count_all_rows && !count_expr->is_param_distinct() &&
+              (1 == select_stmt->get_condition_exprs().count());
         }
       }
     }
@@ -12318,6 +12328,7 @@ int ObLogPlan::prepare_text_retrieval_info(const uint64_t ref_table_id,
     tr_info.pushdown_match_filter_ = nullptr;
     tr_info.need_calc_relevance_ = need_calc_relevance;
     tr_info.print_calc_relevance_ = keep_explain_calc_relevance;
+    tr_info.is_simple_match_count_ = is_simple_match_count;
   }
   return ret;
 }

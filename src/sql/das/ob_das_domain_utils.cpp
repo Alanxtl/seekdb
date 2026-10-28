@@ -34,6 +34,13 @@ namespace oceanbase
 {
 namespace sql
 {
+namespace
+{
+std::atomic<int64_t> g_fts_data_epoch(1);
+}
+
+int64_t get_fts_data_epoch() { return g_fts_data_epoch.load(std::memory_order_relaxed); }
+void bump_fts_data_epoch() { g_fts_data_epoch.fetch_add(1, std::memory_order_relaxed); }
 using storage::ObFTWordMap;
 
 
@@ -88,6 +95,7 @@ int ObFTIndexRowCache::segment(const common::ObObjMeta &ft_obj_meta,
   if (OB_UNLIKELY(!is_inited_)) {
     ret = OB_NOT_INIT;
   } else if (FALSE_IT(reuse())) {
+  } else if (FALSE_IT(bump_fts_data_epoch())) {
   } else if (OB_FAIL(ObDASDomainUtils::generate_fulltext_word_rows(merge_memctx_->get_arena_allocator(),
                                                                    &helper_,
                                                                    ft_obj_meta,

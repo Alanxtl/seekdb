@@ -108,6 +108,8 @@ private:
   int init_topk_limit();
   int init_block_max_iter_param();
   int init_doc_length_est_param();
+  void capture_first_count_row();
+  void save_count_cache();
 private:
   static const int64_t INV_IDX_ROWKEY_COL_CNT = 2;
 private:
@@ -148,6 +150,14 @@ private:
   };
   bool check_rangekey_inited_;
   bool inv_idx_tablet_switched_;
+  bool replay_mode_;
+  int64_t replay_total_;
+  int64_t replay_emitted_;
+  int64_t scan_rows_;
+  bool replay_id_is_uint_;
+  uint64_t replay_id_uint_;
+  char *replay_id_buf_;
+  int64_t replay_id_len_;
   bool is_inited_;
   DISALLOW_COPY_AND_ASSIGN(ObDASLegacyTRMergeIter);
 };

@@ -31,6 +31,9 @@ namespace oceanbase
 namespace sql
 {
 
+int64_t get_fts_data_epoch();
+void bump_fts_data_epoch();
+
 
 class ObFTIndexRowCache final
 {
