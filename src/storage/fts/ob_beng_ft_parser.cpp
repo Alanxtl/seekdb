@@ -49,28 +49,15 @@ int ObBEngFTParser::get_next_token(
     }
   } else if (OB_ISNULL(token.ptr_) || OB_UNLIKELY(0 >= token.len_ || 0 >= token_freq)) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (token.len_ > token_buf_len_ - token_buf_pos_) {
-    const int64_t alloc_len = MAX(token.len_, 4096L);
-    if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(alloc_len)))) {
-      ret = OB_ALLOCATE_MEMORY_FAILED;
-    } else {
-      token_buf_ = buf;
-      token_buf_len_ = alloc_len;
-      token_buf_pos_ = 0;
-      MEMCPY(token_buf_ + token_buf_pos_, token.ptr_, token.len_);
-      buf = token_buf_ + token_buf_pos_;
-      token_buf_pos_ += token.len_;
-    }
+  } else if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(token.len_)))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
-    buf = token_buf_ + token_buf_pos_;
     MEMCPY(buf, token.ptr_, token.len_);
-    token_buf_pos_ += token.len_;
-  }
-  if (OB_SUCC(ret)) {
     word = buf;
     word_len = token.len_;
     char_len = token.len_;
     word_freq = token_freq;
+    LOG_DEBUG("succeed to add word", K(ObString(word_len, word)), K(word_freq));
   }
   return ret;
 }
@@ -84,11 +71,7 @@ int ObBEngFTParser::init(ObFTParserParam *param)
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_UNLIKELY(UINT32_MAX < param->ft_length_)) {
     ret = OB_NOT_SUPPORTED;
-  } else if (FALSE_IT(token_buf_len_ = MIN(MAX(param->ft_length_ * 2 + 64, 4096L), 1024L * 1024L))) {
-  } else if (OB_ISNULL(token_buf_ = static_cast<char *>(allocator_.alloc(token_buf_len_)))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
-    token_buf_pos_ = 0;
     doc_.set_string(param->fulltext_, param->ft_length_);
     analysis_ctx_.cs_ = param->cs_;
     analysis_ctx_.filter_stopword_ = false;
@@ -127,9 +110,6 @@ void ObBEngFTParser::reset()
   english_analyzer_.reset();
   doc_.reset();
   token_stream_ = nullptr;
-  token_buf_ = nullptr;
-  token_buf_len_ = 0;
-  token_buf_pos_ = 0;
   is_inited_ = false;
 }
 

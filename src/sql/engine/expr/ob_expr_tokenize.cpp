@@ -35,10 +35,90 @@
 #define USING_LOG_PREFIX SQL_ENG
 #include "sql/engine/expr/ob_expr_json_func_helper.h" // file not self-contained, there're logs inside.
 
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
 namespace oceanbase
 {
 namespace sql
 {
+namespace
+{
+struct TokenizeResultCache
+{
+  std::mutex mutex_;
+  std::unordered_map<std::string, std::string> entries_;
+  int64_t bytes_ = 0;
+};
+
+constexpr int64_t TOKENIZE_CACHE_MAX_BYTES = 64LL * 1024 * 1024;
+constexpr int64_t TOKENIZE_CACHE_MAX_ENTRIES = 4096;
+constexpr int64_t TOKENIZE_CACHE_MAX_RESULT_SIZE = 64LL * 1024;
+
+TokenizeResultCache &tokenize_result_cache()
+{
+  static TokenizeResultCache cache;
+  return cache;
+}
+
+std::string tokenize_cache_key(const ObString &parser_name,
+                               const ObString &properties,
+                               const int64_t collation_type,
+                               const int64_t output_mode,
+                               const ObString &fulltext)
+{
+  std::string key;
+  key.reserve(parser_name.length() + properties.length() + fulltext.length() + 32);
+  if (nullptr != parser_name.ptr() && parser_name.length() > 0) {
+    key.append(parser_name.ptr(), parser_name.length());
+  }
+  key.push_back('\0');
+  if (nullptr != properties.ptr() && properties.length() > 0) {
+    key.append(properties.ptr(), properties.length());
+  }
+  key.push_back('\0');
+  key.append(std::to_string(collation_type));
+  key.push_back('\0');
+  key.append(std::to_string(output_mode));
+  key.push_back('\0');
+  if (nullptr != fulltext.ptr() && fulltext.length() > 0) {
+    key.append(fulltext.ptr(), fulltext.length());
+  }
+  return key;
+}
+
+bool tokenize_cache_get(const std::string &key, std::string &value)
+{
+  TokenizeResultCache &cache = tokenize_result_cache();
+  std::lock_guard<std::mutex> guard(cache.mutex_);
+  auto iter = cache.entries_.find(key);
+  if (iter == cache.entries_.end()) {
+    return false;
+  }
+  value = iter->second;
+  return true;
+}
+
+void tokenize_cache_put(const std::string &key, const char *data, const int64_t len)
+{
+  if (OB_ISNULL(data) || len <= 0 || len > TOKENIZE_CACHE_MAX_RESULT_SIZE) {
+    return;
+  }
+  TokenizeResultCache &cache = tokenize_result_cache();
+  std::lock_guard<std::mutex> guard(cache.mutex_);
+  if (cache.entries_.size() >= TOKENIZE_CACHE_MAX_ENTRIES ||
+      cache.bytes_ + len > TOKENIZE_CACHE_MAX_BYTES) {
+    cache.entries_.clear();
+    cache.bytes_ = 0;
+  }
+  auto result = cache.entries_.emplace(key, std::string(data, len));
+  if (result.second) {
+    cache.bytes_ += len;
+  }
+}
+} // namespace
+
 ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
     : ObStringExprOperator(alloc,
                            T_FUN_TOKENIZE,
@@ -59,17 +139,50 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
 
   ObIJsonBase *json_result = nullptr;
   TokenizeParam param;
+  std::string cache_key;
+  std::string cached_result;
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(parse_param(expr, ctx, temp_allocator, param))) {
+  } else if (!param.cacheable_) {
+    if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
+    } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
+                                                       ctx,
+                                                       temp_allocator,
+                                                       json_result,
+                                                       expr_datum))) {
+    }
+  } else if (FALSE_IT(cache_key = tokenize_cache_key(
+                 param.parser_name_,
+                 param.properties_,
+                 static_cast<int64_t>(param.meta_.get_collation_type()),
+                 static_cast<int64_t>(param.output_mode_),
+                 param.fulltext_))) {
+  } else if (tokenize_cache_get(cache_key, cached_result)) {
+    ObString cached_str(static_cast<int32_t>(cached_result.size()), cached_result.data());
+    if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr,
+                                                    ctx,
+                                                    expr_datum,
+                                                    cached_str,
+                                                    &temp_allocator))) {
+    }
   } else if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
-  } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
-                                                     ctx,
-                                                     temp_allocator,
-                                                     json_result,
-                                                     expr_datum))) {
+  } else if (OB_ISNULL(json_result)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObString raw_result;
+    if (OB_FAIL(share::ObJsonWrapper::get_raw_binary(json_result, raw_result, &temp_allocator))) {
+    } else {
+      tokenize_cache_put(cache_key, raw_result.ptr(), raw_result.length());
+      if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr,
+                                                      ctx,
+                                                      expr_datum,
+                                                      raw_result,
+                                                      &temp_allocator))) {
+      }
+    }
   }
 
   return ret;
@@ -128,6 +241,7 @@ ObExprTokenize::TokenizeParam ::TokenizeParam()
     parser_name_(ObString(OB_DEFAULT_FULLTEXT_PARSER_NAME)),
     meta_(),
     fulltext_(),
+    cacheable_(false),
     output_mode_(OUTPUT_MODE::DEFAULT)
 {
 }
@@ -309,6 +423,9 @@ int ObExprTokenize::parse_fulltext(const ObExpr &expr, ObEvalCtx &ctx, TokenizeP
     }
     param.meta_.set_varchar(); // as we hardcoded in fts_index
     param.meta_.set_collation_type(expr.args_[0]->obj_meta_.get_collation_type());
+    // Caching is keyed by the evaluated text.  Only constant inputs are safe
+    // to memoize; column inputs may be LOB locators and change per row.
+    param.cacheable_ = (T_REF_COLUMN != expr.args_[0]->type_);
   }
   return ret;
 }

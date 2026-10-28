@@ -355,6 +355,7 @@ int ObDASDomainUtils::build_ft_doc_word_infos(
   } else if (OB_FAIL(helper->segment(meta, fulltext.ptr(), fulltext.length(), doc_length, words_count))) {
   }
 
+  STORAGE_FTS_LOG(TRACE, "segment and calc word count", K(ret), K(words_count.size()), K(type));
   return ret;
 }
 
