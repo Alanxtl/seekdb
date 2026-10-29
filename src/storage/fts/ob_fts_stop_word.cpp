@@ -158,6 +158,55 @@ bool ObAddWord::is_min_max_word(const int64_t c_len) const
   return flag_.min_max_word() && (c_len < min_token_size_ || c_len > max_token_size_);
 }
 
+namespace
+{
+bool is_cjk_or_kana(const uint32_t cp)
+{
+  return (cp >= 0x3400 && cp <= 0x4DBF) ||
+         (cp >= 0x4E00 && cp <= 0x9FFF) ||
+         (cp >= 0xF900 && cp <= 0xFAFF) ||
+         (cp >= 0x3040 && cp <= 0x30FF) ||
+         (cp >= 0xAC00 && cp <= 0xD7AF) ||
+         (cp >= 0x20000 && cp <= 0x2FA1F);
+}
+
+bool token_needs_case_fold(const ObString &token, bool &safe_without_fold)
+{
+  bool need_fold = false;
+  safe_without_fold = true;
+  int64_t i = 0;
+  while (i < token.length() && safe_without_fold) {
+    const unsigned char c = static_cast<unsigned char>(token.ptr()[i]);
+    uint32_t cp = c;
+    int64_t len = 1;
+    if (c < 0x80) {
+      if (c >= 'A' && c <= 'Z') {
+        need_fold = true;
+      }
+    } else if ((c & 0xE0) == 0xC0 && i + 1 < token.length()) {
+      cp = ((c & 0x1F) << 6) | (token.ptr()[i + 1] & 0x3F);
+      len = 2;
+    } else if ((c & 0xF0) == 0xE0 && i + 2 < token.length()) {
+      cp = ((c & 0x0F) << 12) | ((token.ptr()[i + 1] & 0x3F) << 6) |
+           (token.ptr()[i + 2] & 0x3F);
+      len = 3;
+    } else if ((c & 0xF8) == 0xF0 && i + 3 < token.length()) {
+      cp = ((c & 0x07) << 18) | ((token.ptr()[i + 1] & 0x3F) << 12) |
+           ((token.ptr()[i + 2] & 0x3F) << 6) | (token.ptr()[i + 3] & 0x3F);
+      len = 4;
+    } else {
+      safe_without_fold = false;
+    }
+    if (safe_without_fold && cp >= 0x80 && !is_cjk_or_kana(cp)) {
+      // Other scripts may have case mappings; fall back to the charset.
+      safe_without_fold = false;
+    }
+    i += len;
+  }
+  return need_fold;
+}
+} // namespace
+
 int ObAddWord::casedown_word(const ObFTWord &src, ObFTWord &dst)
 {
   int ret = OB_SUCCESS;
@@ -165,9 +214,14 @@ int ObAddWord::casedown_word(const ObFTWord &src, ObFTWord &dst)
     ret = OB_INVALID_ARGUMENT;
   } else if (flag_.casedown()) {
     ObString dst_str;
-    if (OB_FAIL(ObCharset::tolower(
+    const ObString src_str = src.get_word().get_string();
+    bool safe_without_fold = false;
+    const bool need_fold = token_needs_case_fold(src_str, safe_without_fold);
+    if (!need_fold && safe_without_fold) {
+      dst = src;
+    } else if (OB_FAIL(ObCharset::tolower(
                     word_meta_.get_collation_type(),
-                    src.get_word().get_string(),
+                    src_str,
                     dst_str,
                     allocator_))) {
     } else {
