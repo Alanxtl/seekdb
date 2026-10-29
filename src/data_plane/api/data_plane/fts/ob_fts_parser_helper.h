@@ -111,6 +111,7 @@ public:
    */
   static int  init_global();
   static void deinit_global();
+  static int  warm_up_global();
   static ObFTParseData &instance();
 
   int init();
@@ -119,6 +120,7 @@ public:
 public:
   ObStopWordChecker *stop_word_checker() const { return stop_word_checker_; }
   int get_dict_hub(ObFTDictHub *&hub);
+  int warm_up_dicts();
 
 private:
   int init_and_set_stopword_list();

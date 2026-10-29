@@ -18,6 +18,7 @@
 #include "sql/ai/ai_column.h"
 #include "config_bridge.h"
 #include "sql/ob_sql.h"
+#include "storage/fts/ob_fts_parser_helper.h"
 #include "lib/json/ob_json_print_utils.h"
 #include "lib/stat/ob_diagnostic_info_guard.h"
 #include "query/runtime/ob_query_runtime_environment.h"
@@ -179,6 +180,10 @@ int ObSql::stmt_prepare(const common::ObString &stmt,
 int ObSql::stmt_query(const common::ObString &stmt, ObSqlCtx &context, ObResultSet &result)
 {
   int ret = OB_SUCCESS;
+  static std::once_flag fts_warm_once;
+  std::call_once(fts_warm_once, []() {
+    (void)ObFTParseData::warm_up_global();
+  });
   LinkExecCtxGuard link_guard(result.get_session(), result.get_exec_context());
   ObTraceSpanGuard compile_span(&result.get_session(), TRACE_SQL_COMPILE);
   ObTruncatedString trunc_stmt(stmt);
@@ -221,6 +226,10 @@ int ObSql::stmt_execute(const ObPsStmtId stmt_id,
                         bool is_inner_sql)
 {
   int ret = OB_SUCCESS;
+  static std::once_flag fts_warm_once_ps;
+  std::call_once(fts_warm_once_ps, []() {
+    (void)ObFTParseData::warm_up_global();
+  });
   LinkExecCtxGuard link_guard(result.get_session(), result.get_exec_context());
   if (OB_FAIL(sanity_check(context))) {
   } else if (OB_FAIL(init_result_set(context, result))) {

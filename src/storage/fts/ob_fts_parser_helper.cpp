@@ -23,6 +23,8 @@
 #include "common/json_type/ob_json_tree.h"
 #include "share/ob_force_print_log.h"
 #include "storage/fts/dict/ob_ft_dict_hub.h"
+#include "storage/fts/dict/ob_ft_cache_container.h"
+#include "storage/fts/dict/ob_ft_dict_def.h"
 #include "storage/fts/ob_beng_ft_parser.h"
 #include "storage/fts/ob_ik_ft_parser.h"
 #include "storage/fts/ob_ngram2_ft_parser.h"
@@ -167,6 +169,41 @@ void ObFTParseData::deinit_global()
 ObFTParseData &ObFTParseData::instance()
 {
   return *g_ftparse_data;
+}
+
+int ObFTParseData::warm_up_global()
+{
+  int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(g_ftparse_data)) {
+    ret = g_ftparse_data->warm_up_dicts();
+  }
+  return ret;
+}
+
+int ObFTParseData::warm_up_dicts()
+{
+  int ret = OB_SUCCESS;
+  if (!is_inited_ || OB_ISNULL(dict_hub_)) {
+    ret = OB_NOT_INIT;
+  } else {
+    ObFTDictDesc dicts[] = {
+        ObFTDictDesc("main_dict", ObFTDictType::DICT_IK_MAIN,
+                     ObCharsetType::CHARSET_UTF8MB4,
+                     ObCollationType::CS_TYPE_UTF8MB4_BIN),
+        ObFTDictDesc("quan_dict", ObFTDictType::DICT_IK_QUAN,
+                     ObCharsetType::CHARSET_UTF8MB4,
+                     ObCollationType::CS_TYPE_UTF8MB4_BIN),
+        ObFTDictDesc("stopword", ObFTDictType::DICT_IK_STOP,
+                     ObCharsetType::CHARSET_UTF8MB4,
+                     ObCollationType::CS_TYPE_UTF8MB4_BIN)};
+    ObFTCacheRangeContainer container(handler_allocator_);
+    for (int64_t i = 0; OB_SUCC(ret) && i < static_cast<int64_t>(ARRAYSIZEOF(dicts)); ++i) {
+      if (OB_FAIL(dict_hub_->build_cache(dicts[i], container))) {
+        LOG_WARN("failed to warm up fulltext dictionary", K(ret), K(i));
+      }
+    }
+  }
+  return ret;
 }
 
 ObFTParseData::~ObFTParseData()
