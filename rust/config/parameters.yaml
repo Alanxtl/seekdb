@@ -360,7 +360,7 @@
 
 - name: _sort_area_size
   type: CAP
-  default: "32M"
+  default: "64M"
   range: "[2M,]"
   section: OBSERVER
   edit_level: DYNAMIC_EFFECTIVE
